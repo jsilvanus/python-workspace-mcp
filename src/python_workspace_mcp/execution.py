@@ -52,25 +52,37 @@ class DockerExecutionBackend:
         self.ensure_container()
         before = self._files()
         started = time.monotonic()
-        result = subprocess.run(
-            [
-                "docker", "exec", self.settings.docker_container,
-                "python", "-c", code,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=self.settings.execution_timeout,
-        )
+        try:
+            result = subprocess.run(
+                [
+                    "docker", "exec", self.settings.docker_container,
+                    "python", "-c", code,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=self.settings.execution_timeout,
+            )
+            timed_out = False
+        except subprocess.TimeoutExpired as exc:
+            result = subprocess.CompletedProcess(
+                args=exc.cmd,
+                returncode=124,
+                stdout=exc.stdout or "",
+                stderr=(exc.stderr or "") + "\nExecution timed out.",
+            )
+            timed_out = True
+
         duration = time.monotonic() - started
         after = self._files()
         changed = sorted(after - before)
 
         return {
-            "success": result.returncode == 0,
+            "success": result.returncode == 0 and not timed_out,
             "exit_code": result.returncode,
             "stdout": result.stdout,
             "stderr": result.stderr,
             "duration_seconds": round(duration, 3),
+            "timed_out": timed_out,
             "artifacts": [self._artifact(path) for path in changed],
         }
 
