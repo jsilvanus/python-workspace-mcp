@@ -44,13 +44,17 @@ def get_workspace(workspace_id: str | None = None) -> dict:
 
 @mcp.tool()
 def get_system_info() -> dict:
-    """Return server, deployment-profile, runtime and capability information."""
+    """Return server, API, deployment-profile, runtime and capability information."""
     return {
         "server_version": __version__,
         "api_version": "1",
-        "deployment_profile": "local-docker",
+        "deployment_profile": "local",
         "transport": "streamable-http",
-        "runtime": {"language": "python", "docker_image": settings.docker_image},
+        "runtime": {
+            "execution_backend": "docker",
+            "docker_image": settings.docker_image,
+        },
+        "workspace": {"count": 1, "default_workspace_id": workspace.id},
         "capabilities": {
             "persistent_workspace": True,
             "multiple_workspaces": False,
@@ -176,7 +180,11 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
         if settings.api_key:
             supplied = request.headers.get("authorization", "")
             if not hmac.compare_digest(supplied, f"Bearer {settings.api_key}"):
-                return JSONResponse({"error": "unauthorized"}, status_code=401, headers={"WWW-Authenticate": "Bearer"})
+                return JSONResponse(
+                    {"error": "unauthorized"},
+                    status_code=401,
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
         return await call_next(request)
 
 
