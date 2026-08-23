@@ -20,12 +20,21 @@ class Workspace:
             raise ValueError("Path escapes the workspace") from exc
         return candidate
 
+    def storage_used_bytes(self) -> int:
+        total = 0
+        if not self.root.exists():
+            return total
+        for path in self.root.rglob("*"):
+            if path.is_file():
+                total += path.stat().st_size
+        return total
+
     def info(self) -> dict:
         return {
             "id": self.id,
             "name": self.name,
             "status": "ready",
-            "root": str(self.root),
+            "storage": {"used_bytes": self.storage_used_bytes()},
         }
 
 
