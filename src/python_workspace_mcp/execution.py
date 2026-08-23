@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+import mimetypes
 import subprocess
 import time
+import uuid
 from pathlib import Path
+from typing import Protocol
 
 from .config import Settings
 from .workspace import Workspace
+
+
+class ExecutionBackend(Protocol):
+    """Stable boundary between the MCP/workspace layer and code execution."""
+
+    def execute(self, code: str) -> dict: ...
 
 
 class DockerExecutionError(RuntimeError):
@@ -28,12 +37,16 @@ class DockerExecutionBackend:
         )
 
     def ensure_container(self) -> None:
-        inspect = self._docker("inspect", "-f", "{{.State.Running}}", self.settings.docker_container, check=False)
+        inspect = self._docker(
+            "inspect", "-f", "{{.State.Running}}", self.settings.docker_container, check=False
+        )
         if inspect.returncode == 0:
             if inspect.stdout.strip().lower() != "true":
                 started = self._docker("start", self.settings.docker_container, check=False)
                 if started.returncode != 0:
-                    raise DockerExecutionError(started.stderr.strip() or "Could not start runtime container")
+                    raise DockerExecutionError(
+                        started.stderr.strip() or "Could not start runtime container"
+                    )
             return
 
         created = self._docker(
@@ -46,12 +59,16 @@ class DockerExecutionBackend:
             check=False,
         )
         if created.returncode != 0:
-            raise DockerExecutionError(created.stderr.strip() or "Could not create runtime container")
+            raise DockerExecutionError(
+                created.stderr.strip() or "Could not create runtime container"
+            )
 
     def execute(self, code: str) -> dict:
+        execution_id = f"exec_{uuid.uuid4().hex}"
         self.ensure_container()
-        before = self._files()
+        before = self._snapshot_files()
         started = time.monotonic()
+
         result = subprocess.run(
             [
                 "docker", "exec", self.settings.docker_container,
@@ -61,12 +78,17 @@ class DockerExecutionBackend:
             capture_output=True,
             text=True,
         )
+
         duration = time.monotonic() - started
-        after = self._files()
-        changed = sorted(after - before)
-        timed_out = result.returncode == 137
+        after = self._snapshot_files()
+        changed = sorted(
+            path for path, metadata in after.items()
+            if path not in before or before[path] != metadata
+        )
+        timed_out = result.returncode in (124, 137)
 
         return {
+            "execution_id": execution_id,
             "success": result.returncode == 0,
             "exit_code": result.returncode,
             "stdout": result.stdout,
@@ -76,11 +98,17 @@ class DockerExecutionBackend:
             "artifacts": [self._artifact(path) for path in changed],
         }
 
-    def _files(self) -> set[str]:
-        files: set[str] = set()
+    def _snapshot_files(self) -> dict[str, tuple[int, int]]:
+        files: dict[str, tuple[int, int]] = {}
+        if not self.workspace.root.exists():
+            return files
         for path in self.workspace.root.rglob("*"):
             if path.is_file():
-                files.add(path.relative_to(self.workspace.root).as_posix())
+                stat = path.stat()
+                files[path.relative_to(self.workspace.root).as_posix()] = (
+                    stat.st_size,
+                    stat.st_mtime_ns,
+                )
         return files
 
     def _artifact(self, relative_path: str) -> dict:
@@ -93,6 +121,4 @@ class DockerExecutionBackend:
 
 
 def _mime_type(path: Path) -> str:
-    import mimetypes
-
     return mimetypes.guess_type(path.name)[0] or "application/octet-stream"
