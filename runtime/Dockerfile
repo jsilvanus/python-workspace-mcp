@@ -8,15 +8,8 @@ RUN useradd --create-home --uid 1000 workspace \
     && mkdir -p /workspace /tmp/matplotlib \
     && chown -R workspace:workspace /workspace /tmp/matplotlib
 
-RUN pip install --no-cache-dir \
-    numpy \
-    pandas \
-    scipy \
-    statsmodels \
-    sympy \
-    matplotlib \
-    openpyxl \
-    seaborn
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
 USER workspace
 WORKDIR /workspace
