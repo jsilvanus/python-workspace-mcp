@@ -6,7 +6,9 @@ Phase 1 provides a single Docker-backed workspace over **Streamable HTTP**. The 
 
 ## Phase 1 status
 
-This is the first implementation phase and is not yet a hardened sandbox. Docker provides process/filesystem separation from the MCP server, but CPU, memory, disk, network and process limits are deferred to Phase 2.
+The Phase 1 code, contract, tests and documentation are being completed on the `phase-1` branch. It is **not yet a hardened sandbox** and still requires real Docker/MCP end-to-end validation before it should be considered complete.
+
+Docker provides process/filesystem separation from the MCP server, but CPU, memory, disk, PID, network and stronger isolation controls are deferred to Phase 2.
 
 ## Quick start
 
@@ -24,13 +26,13 @@ python -m venv .venv
 pip install -e .
 ```
 
-Build the runtime:
+Build the Python runtime:
 
 ```bash
 docker build -t python-workspace-mcp-runtime:0.1 runtime/
 ```
 
-Start the server:
+Start the MCP server:
 
 ```bash
 python -m python_workspace_mcp.main
@@ -55,6 +57,23 @@ For a non-local deployment, set `PYTHON_WORKSPACE_API_KEY` and connect with `Aut
 - `delete_file`
 - `get_file_url`
 
+`get_workspaces` returns one workspace in Phase 1. Workspace IDs are already part of the contract where relevant so Phase 2 can activate multiple workspaces without changing the tool model.
+
+## Runtime
+
+The initial runtime includes:
+
+- numpy
+- pandas
+- scipy
+- statsmodels
+- sympy
+- matplotlib
+- seaborn
+- openpyxl
+
+The package set is defined in `runtime/requirements.txt` and can evolve independently of the MCP contract.
+
 ## Configuration
 
 Environment variables include:
@@ -70,4 +89,4 @@ Environment variables include:
 - `PYTHON_WORKSPACE_PUBLIC_URL`
 - `PYTHON_WORKSPACE_EXECUTION_TIMEOUT`
 
-See `docs/PLAN.md` and `docs/DEPLOYMENT-PROFILES.md` for the long-term architecture.
+See `docs/PLAN.md`, `docs/MCP-INTERFACE.md`, `docs/SECURITY.md` and `docs/DEPLOYMENT-PROFILES.md` for the architecture and roadmap.
