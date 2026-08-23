@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
-import os
 from pathlib import Path
 
 import uvicorn
@@ -33,10 +32,7 @@ mcp = FastMCP(
 @mcp.tool()
 def get_workspaces() -> dict:
     """List workspaces available to the caller. Phase 1 exposes one workspace."""
-    return {
-        "workspaces": [workspace.info()],
-        "default_workspace_id": workspace.id,
-    }
+    return {"workspaces": [workspace.info()], "default_workspace_id": workspace.id}
 
 
 @mcp.tool()
@@ -122,7 +118,7 @@ def delete_file(path: str, workspace_id: str | None = None) -> dict:
 
 @mcp.tool()
 def get_file_url(path: str, workspace_id: str | None = None) -> dict:
-    """Return a URL for a workspace artifact. The URL is protected by a short opaque token."""
+    """Return a signed URL for a workspace artifact."""
     _require_workspace(workspace_id)
     target = workspace.resolve(path)
     if not target.is_file():
@@ -159,12 +155,15 @@ async def healthz(request: Request) -> Response:
 
 async def file_download(request: Request) -> Response:
     encoded = request.path_params["path"]
-    path = _decode_path(encoded)
-    expected = _file_token(path)
-    supplied = request.query_params.get("token", "")
-    if not hmac.compare_digest(supplied, expected):
-        return JSONResponse({"error": "invalid token"}, status_code=403)
-    target = workspace.resolve(path)
+    try:
+        path = _decode_path(encoded)
+        expected = _file_token(path)
+        supplied = request.query_params.get("token", "")
+        if not hmac.compare_digest(supplied, expected):
+            return JSONResponse({"error": "invalid token"}, status_code=403)
+        target = workspace.resolve(path)
+    except (ValueError, UnicodeError):
+        return JSONResponse({"error": "invalid path"}, status_code=400)
     if not target.is_file():
         return JSONResponse({"error": "file not found"}, status_code=404)
     return FileResponse(target)
@@ -172,7 +171,7 @@ async def file_download(request: Request) -> Response:
 
 class ApiKeyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        if request.url.path == "/healthz":
+        if request.url.path == "/healthz" or request.url.path.startswith("/files/"):
             return await call_next(request)
         if settings.api_key:
             supplied = request.headers.get("authorization", "")
