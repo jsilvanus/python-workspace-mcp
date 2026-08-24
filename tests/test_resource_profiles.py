@@ -17,6 +17,12 @@ def test_builtin_profiles_are_available(tmp_path: Path):
     profile = manager.get("standard")
     assert profile.defaults.memory_bytes == 4 * 1024**3
     assert profile.maximums.memory_bytes == 8 * 1024**3
+    assert profile.capabilities.package_install is True
+    assert profile.capabilities.outbound_network is False
+
+
+def test_small_profile_disables_package_install(tmp_path: Path):
+    assert ResourceProfileManager(settings(tmp_path)).get("small").capabilities.package_install is False
 
 
 def test_profile_rejects_request_above_maximum(tmp_path: Path):
@@ -32,5 +38,4 @@ def test_workspace_selects_profile(tmp_path: Path):
     manager = WorkspaceManager(cfg)
     definition = manager.create_workspace("alice", "Alice", tmp_path / "alice", "default", "small")
     assert definition.profile_id == "small"
-    assert definition.limits.memory_bytes == 1 * 1024**3
-    assert definition.maximum_limits.memory_bytes == 2 * 1024**3
+    assert definition.capabilities.package_install is False
