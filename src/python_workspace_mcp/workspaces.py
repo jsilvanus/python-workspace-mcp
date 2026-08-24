@@ -15,6 +15,7 @@ class WorkspaceDefinition:
     name: str
     root: Path
     limits: ResourceLimits
+    owner_user_id: str
 
 
 class WorkspaceManager:
@@ -35,11 +36,15 @@ class WorkspaceManager:
             item = item.strip()
             if not item:
                 continue
-            parts = item.split(":", 2)
-            if len(parts) != 3:
-                raise ValueError("PYTHON_WORKSPACE_WORKSPACES entries must be id:name:path")
-            workspace_id, name, root = parts
+            parts = item.split(":", 3)
+            if len(parts) not in (3, 4):
+                raise ValueError(
+                    "PYTHON_WORKSPACE_WORKSPACES entries must be id:name:path[:owner_user_id]"
+                )
+            workspace_id, name, root = parts[:3]
+            owner_user_id = parts[3] if len(parts) == 4 else self.settings.user_id
             self._validate_id(workspace_id)
+            self._validate_id(owner_user_id)
             if workspace_id in definitions:
                 raise ValueError(f"Duplicate workspace id: {workspace_id}")
             definitions[workspace_id] = WorkspaceDefinition(
@@ -47,6 +52,7 @@ class WorkspaceManager:
                 name=name,
                 root=Path(root).expanduser().resolve(),
                 limits=self._limits_for(workspace_id),
+                owner_user_id=owner_user_id,
             )
         if not definitions:
             definitions["default"] = WorkspaceDefinition(
@@ -54,6 +60,7 @@ class WorkspaceManager:
                 name=self.settings.workspace_name,
                 root=self.settings.workspace_path,
                 limits=self._limits_for("default"),
+                owner_user_id=self.settings.user_id,
             )
         return definitions
 
@@ -69,9 +76,9 @@ class WorkspaceManager:
         )
 
     @staticmethod
-    def _validate_id(workspace_id: str) -> None:
-        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", workspace_id):
-            raise ValueError(f"Invalid workspace id: {workspace_id!r}")
+    def _validate_id(value: str) -> None:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", value):
+            raise ValueError(f"Invalid id: {value!r}")
 
     def ids(self) -> list[str]:
         return list(self._definitions)
@@ -92,6 +99,7 @@ class WorkspaceManager:
         definition = self.get_definition(workspace_id)
         workspace = self.get(definition.id)
         info = workspace.info()
+        info["owner_user_id"] = definition.owner_user_id
         info["limits"] = definition.limits.as_dict()
         info["runtime"] = {
             "backend": "docker",
