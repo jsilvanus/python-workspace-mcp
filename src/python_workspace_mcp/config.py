@@ -22,6 +22,9 @@ class Settings:
     docker_image: str = "python-workspace-mcp-runtime:0.1"
     docker_container_prefix: str = "python-workspace-mcp"
     public_base_url: str = "http://localhost:8000"
+    default_resource_profile: str = "standard"
+    # Legacy global limits remain as compatibility configuration for deployments
+    # that haven't migrated their workspaces to named profiles yet.
     execution_timeout: int = 60
     cpu_limit: float = 2.0
     memory_limit_bytes: int = 4 * 1024 * 1024 * 1024
@@ -50,6 +53,7 @@ class Settings:
             docker_image=os.getenv("PYTHON_WORKSPACE_DOCKER_IMAGE", "python-workspace-mcp-runtime:0.1"),
             docker_container_prefix=os.getenv("PYTHON_WORKSPACE_DOCKER_PREFIX", "python-workspace-mcp"),
             public_base_url=os.getenv("PYTHON_WORKSPACE_PUBLIC_URL", "http://localhost:8000").rstrip("/"),
+            default_resource_profile=os.getenv("PYTHON_WORKSPACE_RESOURCE_PROFILE", "standard"),
             execution_timeout=int(os.getenv("PYTHON_WORKSPACE_EXECUTION_TIMEOUT", "60")),
             cpu_limit=float(os.getenv("PYTHON_WORKSPACE_CPU_LIMIT", "2")),
             memory_limit_bytes=int(os.getenv("PYTHON_WORKSPACE_MEMORY_LIMIT_BYTES", str(4 * 1024 * 1024 * 1024))),
