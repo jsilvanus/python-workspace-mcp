@@ -7,13 +7,11 @@ import uuid
 from pathlib import Path
 from typing import Protocol
 
-from .config import Settings
+from .limits import ResourceLimits
 from .workspace import Workspace
 
 
 class ExecutionBackend(Protocol):
-    """Stable boundary between the MCP/workspace layer and code execution."""
-
     def execute(self, code: str) -> dict: ...
 
 
@@ -21,12 +19,25 @@ class DockerExecutionError(RuntimeError):
     pass
 
 
-class DockerExecutionBackend:
-    """Phase 1 execution backend: one persistent Docker container per server."""
+class ResourceLimitError(RuntimeError):
+    pass
 
-    def __init__(self, settings: Settings, workspace: Workspace) -> None:
-        self.settings = settings
+
+class DockerExecutionBackend:
+    """Docker execution with a dedicated container and limits per workspace."""
+
+    def __init__(
+        self,
+        *,
+        image: str,
+        container_name: str,
+        workspace: Workspace,
+        limits: ResourceLimits,
+    ) -> None:
+        self.image = image
+        self.container_name = container_name
         self.workspace = workspace
+        self.limits = limits
 
     def _docker(self, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -38,26 +49,36 @@ class DockerExecutionBackend:
 
     def ensure_container(self) -> None:
         inspect = self._docker(
-            "inspect", "-f", "{{.State.Running}}", self.settings.docker_container, check=False
+            "inspect", "-f", "{{.State.Running}}", self.container_name, check=False
         )
         if inspect.returncode == 0:
             if inspect.stdout.strip().lower() != "true":
-                started = self._docker("start", self.settings.docker_container, check=False)
+                started = self._docker("start", self.container_name, check=False)
                 if started.returncode != 0:
                     raise DockerExecutionError(
                         started.stderr.strip() or "Could not start runtime container"
                     )
             return
 
-        created = self._docker(
+        args = [
             "run", "-d",
-            "--name", self.settings.docker_container,
+            "--name", self.container_name,
             "--user", "1000:1000",
-            "-v", f"{self.workspace.root}:/workspace",
-            self.settings.docker_image,
+            "--cpus", str(self.limits.cpu),
+            "--memory", str(self.limits.memory_bytes),
+            "--memory-swap", str(self.limits.memory_bytes),
+            "--pids-limit", str(self.limits.pids),
+            "--network", "none",
+            "--cap-drop", "ALL",
+            "--security-opt", "no-new-privileges:true",
+            "--read-only",
+            "--tmpfs", "/tmp:rw,nosuid,nodev,size=256m",
+            "-v", f"{self.workspace.root}:/workspace:rw",
+            "-w", "/workspace",
+            self.image,
             "sleep", "infinity",
-            check=False,
-        )
+        ]
+        created = self._docker(*args, check=False)
         if created.returncode != 0:
             raise DockerExecutionError(
                 created.stderr.strip() or "Could not create runtime container"
@@ -65,20 +86,20 @@ class DockerExecutionBackend:
 
     def execute(self, code: str) -> dict:
         execution_id = f"exec_{uuid.uuid4().hex}"
+        self._check_storage()
         self.ensure_container()
         before = self._snapshot_files()
         started = time.monotonic()
 
         result = subprocess.run(
             [
-                "docker", "exec", self.settings.docker_container,
-                "timeout", "--signal=KILL", f"{self.settings.execution_timeout}s",
+                "docker", "exec", self.container_name,
+                "timeout", "--signal=KILL", f"{self.limits.execution_timeout_seconds}s",
                 "python", "-c", code,
             ],
             capture_output=True,
             text=True,
         )
-
         duration = time.monotonic() - started
         after = self._snapshot_files()
         changed = sorted(
@@ -86,17 +107,45 @@ class DockerExecutionBackend:
             if path not in before or before[path] != metadata
         )
         timed_out = result.returncode in (124, 137)
+        storage_exceeded = self._storage_used() > self.limits.storage_bytes
+        output_limited = len(result.stdout.encode()) + len(result.stderr.encode()) > self.limits.max_output_bytes
+
+        stdout = _truncate(result.stdout, self.limits.max_output_bytes // 2)
+        stderr = _truncate(result.stderr, self.limits.max_output_bytes // 2)
+        if storage_exceeded:
+            stderr += "\nWorkspace storage limit exceeded."
+        if output_limited:
+            stderr += "\nExecution output was truncated."
+
+        artifacts = [self._artifact(path) for path in changed[: self.limits.max_artifacts_per_execution]]
+        artifacts_truncated = len(changed) > len(artifacts)
 
         return {
             "execution_id": execution_id,
-            "success": result.returncode == 0,
+            "success": result.returncode == 0 and not storage_exceeded,
             "exit_code": result.returncode,
-            "stdout": result.stdout,
-            "stderr": result.stderr,
+            "stdout": stdout,
+            "stderr": stderr,
             "duration_seconds": round(duration, 3),
             "timed_out": timed_out,
-            "artifacts": [self._artifact(path) for path in changed],
+            "resource_limits": self.limits.as_dict(),
+            "storage_used_bytes": self._storage_used(),
+            "artifacts": artifacts,
+            "artifacts_truncated": artifacts_truncated,
         }
+
+    def _storage_used(self) -> int:
+        total = 0
+        if not self.workspace.root.exists():
+            return total
+        for path in self.workspace.root.rglob("*"):
+            if path.is_file():
+                total += path.stat().st_size
+        return total
+
+    def _check_storage(self) -> None:
+        if self._storage_used() > self.limits.storage_bytes:
+            raise ResourceLimitError("Workspace storage limit already exceeded")
 
     def _snapshot_files(self) -> dict[str, tuple[int, int]]:
         files: dict[str, tuple[int, int]] = {}
@@ -118,6 +167,13 @@ class DockerExecutionBackend:
             "size_bytes": path.stat().st_size,
             "mime_type": _mime_type(path),
         }
+
+
+def _truncate(value: str, max_bytes: int) -> str:
+    encoded = value.encode()
+    if len(encoded) <= max_bytes:
+        return value
+    return encoded[:max_bytes].decode(errors="replace") + "\n[output truncated]"
 
 
 def _mime_type(path: Path) -> str:
