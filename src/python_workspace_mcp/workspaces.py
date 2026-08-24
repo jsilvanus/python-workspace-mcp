@@ -6,6 +6,7 @@ import re
 
 from .config import Settings
 from .limits import ResourceLimits
+from .state import StateStore
 from .workspace import Workspace
 
 
@@ -19,49 +20,55 @@ class WorkspaceDefinition:
 
 
 class WorkspaceManager:
-    """Configuration-backed registry of persistent workspaces."""
+    """Persistent workspace registry with ownership."""
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+        self.store = StateStore(settings.state_path)
+        self._ensure_defaults()
         self._definitions = self._load_definitions()
-        if settings.default_workspace_id not in self._definitions:
-            raise ValueError(
-                f"Default workspace is not configured: {settings.default_workspace_id}"
-            )
 
-    def _load_definitions(self) -> dict[str, WorkspaceDefinition]:
-        definitions: dict[str, WorkspaceDefinition] = {}
-        raw = self.settings.workspace_definitions
-        for item in raw.split(","):
+    def _ensure_defaults(self) -> None:
+        state = self.store.load()
+        if not state["workspaces"]:
+            state["workspaces"][self.settings.default_workspace_id] = {
+                "name": self.settings.workspace_name,
+                "root": str(self.settings.workspace_path),
+                "owner_user_id": self.settings.user_id,
+            }
+        # Environment-defined workspaces remain a convenient migration/configuration path.
+        for item in self.settings.workspace_definitions.split(","):
             item = item.strip()
             if not item:
                 continue
             parts = item.split(":", 3)
             if len(parts) not in (3, 4):
-                raise ValueError(
-                    "PYTHON_WORKSPACE_WORKSPACES entries must be id:name:path[:owner_user_id]"
-                )
+                raise ValueError("PYTHON_WORKSPACE_WORKSPACES entries must be id:name:path[:owner_user_id]")
             workspace_id, name, root = parts[:3]
             owner_user_id = parts[3] if len(parts) == 4 else self.settings.user_id
+            state["workspaces"].setdefault(workspace_id, {
+                "name": name,
+                "root": str(Path(root).expanduser().resolve()),
+                "owner_user_id": owner_user_id,
+            })
+        self.store.save(state)
+
+    def _load_definitions(self) -> dict[str, WorkspaceDefinition]:
+        state = self.store.load()
+        definitions: dict[str, WorkspaceDefinition] = {}
+        for workspace_id, data in state["workspaces"].items():
             self._validate_id(workspace_id)
-            self._validate_id(owner_user_id)
-            if workspace_id in definitions:
-                raise ValueError(f"Duplicate workspace id: {workspace_id}")
+            owner = data["owner_user_id"]
+            self._validate_id(owner)
             definitions[workspace_id] = WorkspaceDefinition(
                 id=workspace_id,
-                name=name,
-                root=Path(root).expanduser().resolve(),
+                name=data["name"],
+                root=Path(data["root"]).expanduser().resolve(),
                 limits=self._limits_for(workspace_id),
-                owner_user_id=owner_user_id,
+                owner_user_id=owner,
             )
-        if not definitions:
-            definitions["default"] = WorkspaceDefinition(
-                id="default",
-                name=self.settings.workspace_name,
-                root=self.settings.workspace_path,
-                limits=self._limits_for("default"),
-                owner_user_id=self.settings.user_id,
-            )
+        if self.settings.default_workspace_id not in definitions:
+            raise ValueError(f"Default workspace is not configured: {self.settings.default_workspace_id}")
         return definitions
 
     def _limits_for(self, workspace_id: str) -> ResourceLimits:
@@ -80,6 +87,9 @@ class WorkspaceManager:
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", value):
             raise ValueError(f"Invalid id: {value!r}")
 
+    def refresh(self) -> None:
+        self._definitions = self._load_definitions()
+
     def ids(self) -> list[str]:
         return list(self._definitions)
 
@@ -94,6 +104,31 @@ class WorkspaceManager:
         definition = self.get_definition(workspace_id)
         definition.root.mkdir(parents=True, exist_ok=True)
         return Workspace(id=definition.id, name=definition.name, root=definition.root)
+
+    def create_workspace(self, workspace_id: str, name: str, root: Path, owner_user_id: str) -> WorkspaceDefinition:
+        self._validate_id(workspace_id)
+        self._validate_id(owner_user_id)
+        state = self.store.load()
+        if workspace_id in state["workspaces"]:
+            raise ValueError(f"Workspace already exists: {workspace_id}")
+        state["workspaces"][workspace_id] = {
+            "name": name,
+            "root": str(root.expanduser().resolve()),
+            "owner_user_id": owner_user_id,
+        }
+        self.store.save(state)
+        self.refresh()
+        return self.get_definition(workspace_id)
+
+    def delete_workspace(self, workspace_id: str) -> None:
+        if workspace_id == self.settings.default_workspace_id:
+            raise ValueError("Cannot delete the default workspace")
+        state = self.store.load()
+        if workspace_id not in state["workspaces"]:
+            raise ValueError(f"Unknown workspace: {workspace_id}")
+        state["workspaces"].pop(workspace_id)
+        self.store.save(state)
+        self.refresh()
 
     def info(self, workspace_id: str | None = None) -> dict:
         definition = self.get_definition(workspace_id)
