@@ -10,6 +10,8 @@ class Settings:
     host: str = "0.0.0.0"
     port: int = 8000
     api_key: str | None = None
+    user_id: str = "default"
+    user_name: str = "Default User"
     default_workspace_id: str = "default"
     workspace_name: str = "Default Workspace"
     workspace_path: Path = Path("./workspace")
@@ -32,6 +34,8 @@ class Settings:
             host=os.getenv("PYTHON_WORKSPACE_HOST", "0.0.0.0"),
             port=int(os.getenv("PYTHON_WORKSPACE_PORT", "8000")),
             api_key=os.getenv("PYTHON_WORKSPACE_API_KEY"),
+            user_id=os.getenv("PYTHON_WORKSPACE_USER_ID", "default"),
+            user_name=os.getenv("PYTHON_WORKSPACE_USER_NAME", "Default User"),
             default_workspace_id=os.getenv("PYTHON_WORKSPACE_ID", "default"),
             workspace_name=os.getenv("PYTHON_WORKSPACE_NAME", "Default Workspace"),
             workspace_path=path,
