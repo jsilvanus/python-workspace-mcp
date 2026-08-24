@@ -40,12 +40,7 @@ class DockerExecutionBackend:
         self.limits = limits
 
     def _docker(self, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            ["docker", *args],
-            capture_output=True,
-            text=True,
-            check=check,
-        )
+        return subprocess.run(["docker", *args], capture_output=True, text=True, check=check)
 
     def ensure_container(self) -> None:
         inspect = self._docker(
@@ -73,6 +68,8 @@ class DockerExecutionBackend:
             "--security-opt", "no-new-privileges:true",
             "--read-only",
             "--tmpfs", "/tmp:rw,nosuid,nodev,size=256m",
+            "-e", "HOME=/tmp",
+            "-e", "MPLCONFIGDIR=/tmp/matplotlib",
             "-v", f"{self.workspace.root}:/workspace:rw",
             "-w", "/workspace",
             self.image,
@@ -107,7 +104,8 @@ class DockerExecutionBackend:
             if path not in before or before[path] != metadata
         )
         timed_out = result.returncode in (124, 137)
-        storage_exceeded = self._storage_used() > self.limits.storage_bytes
+        storage_used = self._storage_used()
+        storage_exceeded = storage_used > self.limits.storage_bytes
         output_limited = len(result.stdout.encode()) + len(result.stderr.encode()) > self.limits.max_output_bytes
 
         stdout = _truncate(result.stdout, self.limits.max_output_bytes // 2)
@@ -117,9 +115,10 @@ class DockerExecutionBackend:
         if output_limited:
             stderr += "\nExecution output was truncated."
 
-        artifacts = [self._artifact(path) for path in changed[: self.limits.max_artifacts_per_execution]]
-        artifacts_truncated = len(changed) > len(artifacts)
-
+        artifacts = [
+            self._artifact(path)
+            for path in changed[: self.limits.max_artifacts_per_execution]
+        ]
         return {
             "execution_id": execution_id,
             "success": result.returncode == 0 and not storage_exceeded,
@@ -129,9 +128,9 @@ class DockerExecutionBackend:
             "duration_seconds": round(duration, 3),
             "timed_out": timed_out,
             "resource_limits": self.limits.as_dict(),
-            "storage_used_bytes": self._storage_used(),
+            "storage_used_bytes": storage_used,
             "artifacts": artifacts,
-            "artifacts_truncated": artifacts_truncated,
+            "artifacts_truncated": len(changed) > len(artifacts),
         }
 
     def _storage_used(self) -> int:
