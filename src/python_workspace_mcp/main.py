@@ -77,7 +77,6 @@ def _requested_limits(workspace_id: str | None, resources: dict | None) -> Resou
         raise ValueError("resources must be an object")
     definition = workspaces.get_definition(workspace_id)
     _authorize_workspace(definition.owner_user_id)
-    allowed = definition.maximum_limits
     defaults = definition.limits
     values = {
         "cpu": defaults.cpu,
@@ -91,6 +90,8 @@ def _requested_limits(workspace_id: str | None, resources: dict | None) -> Resou
     aliases = {"timeout": "execution_timeout_seconds", "output_bytes": "max_output_bytes", "max_artifacts": "max_artifacts_per_execution"}
     for key, value in resources.items():
         key = aliases.get(key, key)
+        if key == "storage_bytes":
+            raise ValueError("storage_bytes is a workspace policy and cannot be changed per execution")
         if key not in values:
             raise ValueError(f"Unknown resource: {key}")
         if not isinstance(value, (int, float)) or isinstance(value, bool):
