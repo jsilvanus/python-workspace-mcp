@@ -1,0 +1,7 @@
+- [x] explicit package/file capabilities
+- [x] persistent workspace package directory
+- [x] offline long-lived execution runtime
+- [x] binary-safe upload
+- [x] signed file download
+- [x] docs and tests
+- [ ] Docker runtime validation
