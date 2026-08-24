@@ -198,7 +198,6 @@ async def file_download(request: Request) -> Response:
     encoded = request.path_params["path"]
     try:
         definition = workspaces.get_definition(workspace_id)
-        _authorize_workspace(definition.owner_user_id)
         workspace = workspaces.get(workspace_id)
         path = _decode_path(encoded)
         expected = _file_token(workspace.id, path)
@@ -206,6 +205,8 @@ async def file_download(request: Request) -> Response:
         if not hmac.compare_digest(supplied, expected):
             return JSONResponse({"error": "invalid token"}, status_code=403)
         target = workspace.resolve(path)
+        if definition.owner_user_id not in {u.id for u in users.all()}:
+            return JSONResponse({"error": "workspace unavailable"}, status_code=404)
     except (ValueError, UnicodeError):
         return JSONResponse({"error": "invalid path"}, status_code=400)
     if not target.is_file():
@@ -219,13 +220,17 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         supplied = request.headers.get("authorization", "")
         principal = None
-        if supplied.startswith("Bearer "):
+        if supplied:
+            if not supplied.startswith("Bearer "):
+                return JSONResponse({"error": "invalid authorization"}, status_code=401, headers={"WWW-Authenticate": "Bearer"})
             raw_key = supplied[7:]
             try:
                 principal = users.resolve_api_key(raw_key)
             except ValueError:
                 if settings.api_key and hmac.compare_digest(raw_key, settings.api_key):
                     principal = users.principal("environment-api-key")
+                else:
+                    return JSONResponse({"error": "unauthorized"}, status_code=401, headers={"WWW-Authenticate": "Bearer"})
         if principal is None and settings.require_auth:
             return JSONResponse({"error": "unauthorized"}, status_code=401, headers={"WWW-Authenticate": "Bearer"})
         token = _current_principal.set(principal)
