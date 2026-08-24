@@ -1,0 +1,1 @@
+The branch is intentionally not merge-ready until Docker runtime validation is performed.
