@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import re
 
+from .capabilities import WorkspaceCapabilities
 from .config import Settings
 from .limits import ResourceLimits
 from .profiles import ResourceProfileManager
@@ -20,10 +21,11 @@ class WorkspaceDefinition:
     maximum_limits: ResourceLimits
     profile_id: str
     owner_user_id: str
+    capabilities: WorkspaceCapabilities
 
 
 class WorkspaceManager:
-    """Persistent workspace registry with ownership and resource policies."""
+    """Persistent workspace registry with ownership, resource policies and capabilities."""
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -52,12 +54,7 @@ class WorkspaceManager:
             owner_user_id = parts[3] if len(parts) >= 4 else self.settings.user_id
             profile_id = parts[4] if len(parts) == 5 else self.settings.default_resource_profile
             self.profiles.get(profile_id)
-            state["workspaces"].setdefault(workspace_id, {
-                "name": name,
-                "root": str(Path(root).expanduser().resolve()),
-                "owner_user_id": owner_user_id,
-                "profile_id": profile_id,
-            })
+            state["workspaces"].setdefault(workspace_id, {"name": name, "root": str(Path(root).expanduser().resolve()), "owner_user_id": owner_user_id, "profile_id": profile_id})
         self.store.save(state)
 
     def _load_definitions(self) -> dict[str, WorkspaceDefinition]:
@@ -67,16 +64,11 @@ class WorkspaceManager:
             self._validate_id(workspace_id)
             owner = data["owner_user_id"]
             self._validate_id(owner)
-            profile_id = data.get("profile_id", self.settings.default_resource_profile)
-            profile = self.profiles.get(profile_id)
+            profile = self.profiles.get(data.get("profile_id", self.settings.default_resource_profile))
             definitions[workspace_id] = WorkspaceDefinition(
-                id=workspace_id,
-                name=data["name"],
-                root=Path(data["root"]).expanduser().resolve(),
-                limits=profile.defaults,
-                maximum_limits=profile.maximums,
-                profile_id=profile.id,
-                owner_user_id=owner,
+                id=workspace_id, name=data["name"], root=Path(data["root"]).expanduser().resolve(),
+                limits=profile.defaults, maximum_limits=profile.maximums, profile_id=profile.id,
+                owner_user_id=owner, capabilities=profile.capabilities,
             )
         if self.settings.default_workspace_id not in definitions:
             raise ValueError(f"Default workspace is not configured: {self.settings.default_workspace_id}")
@@ -114,12 +106,7 @@ class WorkspaceManager:
         state = self.store.load()
         if workspace_id in state["workspaces"]:
             raise ValueError(f"Workspace already exists: {workspace_id}")
-        state["workspaces"][workspace_id] = {
-            "name": name,
-            "root": str(root.expanduser().resolve()),
-            "owner_user_id": owner_user_id,
-            "profile_id": profile_id,
-        }
+        state["workspaces"][workspace_id] = {"name": name, "root": str(root.expanduser().resolve()), "owner_user_id": owner_user_id, "profile_id": profile_id}
         self.store.save(state)
         self.refresh()
         return self.get_definition(workspace_id)
@@ -148,14 +135,8 @@ class WorkspaceManager:
         definition = self.get_definition(workspace_id)
         workspace = self.get(definition.id)
         info = workspace.info()
-        info["owner_user_id"] = definition.owner_user_id
-        info["resource_profile"] = definition.profile_id
-        info["limits"] = definition.limits.as_dict()
-        info["maximum_limits"] = definition.maximum_limits.as_dict()
-        info["runtime"] = {
-            "backend": "docker",
-            "container": f"{self.settings.docker_container_prefix}-{definition.id}",
-        }
+        info.update({"owner_user_id": definition.owner_user_id, "resource_profile": definition.profile_id, "limits": definition.limits.as_dict(), "maximum_limits": definition.maximum_limits.as_dict(), "capabilities": definition.capabilities.as_dict()})
+        info["runtime"] = {"backend": "docker", "container": f"{self.settings.docker_container_prefix}-{definition.id}"}
         return info
 
     def all_info(self) -> list[dict]:
