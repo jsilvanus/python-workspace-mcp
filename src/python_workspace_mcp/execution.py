@@ -27,14 +27,7 @@ class ResourceLimitError(RuntimeError):
 class DockerExecutionBackend:
     """Docker execution with a dedicated container and per-workspace limits."""
 
-    def __init__(
-        self,
-        *,
-        image: str,
-        container_name: str,
-        workspace: Workspace,
-        limits: ResourceLimits,
-    ) -> None:
+    def __init__(self, *, image: str, container_name: str, workspace: Workspace, limits: ResourceLimits) -> None:
         self.image = image
         self.container_name = container_name
         self.workspace = workspace
@@ -46,9 +39,7 @@ class DockerExecutionBackend:
 
     def ensure_container(self, limits: ResourceLimits | None = None) -> None:
         limits = limits or self.limits
-        inspect = self._docker(
-            "inspect", "-f", "{{.State.Running}}", self.container_name, check=False
-        )
+        inspect = self._docker("inspect", "-f", "{{.State.Running}}", self.container_name, check=False)
         if inspect.returncode == 0:
             if inspect.stdout.strip().lower() != "true":
                 started = self._docker("start", self.container_name, check=False)
@@ -56,43 +47,35 @@ class DockerExecutionBackend:
                     raise DockerExecutionError(started.stderr.strip() or "Could not start runtime container")
             self._update_container_limits(limits)
             return
-
-        args = [
-            "run", "-d",
-            "--name", self.container_name,
-            "--user", "1000:1000",
-            "--cpus", str(limits.cpu),
-            "--memory", str(limits.memory_bytes),
-            "--memory-swap", str(limits.memory_bytes),
-            "--pids-limit", str(limits.pids),
-            "--network", "none",
-            "--cap-drop", "ALL",
-            "--security-opt", "no-new-privileges:true",
-            "--read-only",
-            "--tmpfs", "/tmp:rw,nosuid,nodev,size=256m",
-            "-e", "HOME=/tmp",
-            "-e", "MPLCONFIGDIR=/tmp/matplotlib",
-            "-v", f"{self.workspace.root}:/workspace:rw",
-            "-w", "/workspace",
-            self.image,
-            "sleep", "infinity",
-        ]
+        args = ["run", "-d", "--name", self.container_name, "--user", "1000:1000", "--cpus", str(limits.cpu), "--memory", str(limits.memory_bytes), "--memory-swap", str(limits.memory_bytes), "--pids-limit", str(limits.pids), "--network", "none", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true", "--read-only", "--tmpfs", "/tmp:rw,nosuid,nodev,size=256m", "-e", "HOME=/tmp", "-e", "MPLCONFIGDIR=/tmp/matplotlib", "-e", "PYTHONPATH=/workspace/.python-packages", "-v", f"{self.workspace.root}:/workspace:rw", "-w", "/workspace", self.image, "sleep", "infinity"]
         created = self._docker(*args, check=False)
         if created.returncode != 0:
             raise DockerExecutionError(created.stderr.strip() or "Could not create runtime container")
 
     def _update_container_limits(self, limits: ResourceLimits) -> None:
-        updated = self._docker(
-            "update",
-            "--cpus", str(limits.cpu),
-            "--memory", str(limits.memory_bytes),
-            "--memory-swap", str(limits.memory_bytes),
-            "--pids-limit", str(limits.pids),
-            self.container_name,
-            check=False,
-        )
+        updated = self._docker("update", "--cpus", str(limits.cpu), "--memory", str(limits.memory_bytes), "--memory-swap", str(limits.memory_bytes), "--pids-limit", str(limits.pids), self.container_name, check=False)
         if updated.returncode != 0:
             raise DockerExecutionError(updated.stderr.strip() or "Could not update runtime limits")
+
+    def install_package(self, package: str) -> dict:
+        """Install from the configured PyPI index into persistent workspace storage.
+
+        This deliberately uses a short-lived network-enabled installer container;
+        the long-lived Python runtime remains network=none. The index is pinned to
+        PyPI, but a future proxy should replace this direct egress for stronger
+        network-level enforcement.
+        """
+        if not package or any(ch in package for ch in "\r\n;&|`$"):
+            raise ValueError("Invalid package specification")
+        target = self.workspace.root / ".python-packages"
+        target.mkdir(parents=True, exist_ok=True)
+        result = self._docker(
+            "run", "--rm", "--network", "bridge", "-v", f"{self.workspace.root}:/workspace:rw",
+            "-w", "/workspace", self.image, "python", "-m", "pip", "install",
+            "--disable-pip-version-check", "--no-input", "--index-url", "https://pypi.org/simple",
+            "--target", "/workspace/.python-packages", package, check=False,
+        )
+        return {"success": result.returncode == 0, "package": package, "stdout": result.stdout, "stderr": result.stderr}
 
     def execute(self, code: str, limits: ResourceLimits | None = None) -> dict:
         limits = limits or self.limits
@@ -102,69 +85,33 @@ class DockerExecutionBackend:
             self.ensure_container(limits)
             before = self._snapshot_files()
             started = time.monotonic()
-            result = subprocess.run(
-                [
-                    "docker", "exec", self.container_name,
-                    "timeout", "--signal=KILL", f"{limits.execution_timeout_seconds}s",
-                    "python", "-c", code,
-                ],
-                capture_output=True,
-                text=True,
-            )
+            result = subprocess.run(["docker", "exec", self.container_name, "timeout", "--signal=KILL", f"{limits.execution_timeout_seconds}s", "python", "-c", code], capture_output=True, text=True)
             duration = time.monotonic() - started
             after = self._snapshot_files()
-            changed = sorted(
-                path for path, metadata in after.items()
-                if path not in before or before[path] != metadata
-            )
+            changed = sorted(path for path, metadata in after.items() if path not in before or before[path] != metadata)
             timed_out = result.returncode in (124, 137)
             storage_used = self._storage_used()
             storage_exceeded = storage_used > limits.storage_bytes
             output_limited = len(result.stdout.encode()) + len(result.stderr.encode()) > limits.max_output_bytes
-
             stdout = _truncate(result.stdout, limits.max_output_bytes // 2)
             stderr = _truncate(result.stderr, limits.max_output_bytes // 2)
-            if storage_exceeded:
-                stderr += "\nWorkspace storage limit exceeded."
-            if output_limited:
-                stderr += "\nExecution output was truncated."
-
+            if storage_exceeded: stderr += "\nWorkspace storage limit exceeded."
+            if output_limited: stderr += "\nExecution output was truncated."
             artifacts = [self._artifact(path) for path in changed[: limits.max_artifacts_per_execution]]
-            return {
-                "execution_id": execution_id,
-                "success": result.returncode == 0 and not storage_exceeded,
-                "exit_code": result.returncode,
-                "stdout": stdout,
-                "stderr": stderr,
-                "duration_seconds": round(duration, 3),
-                "timed_out": timed_out,
-                "resource_limits": limits.as_dict(),
-                "storage_used_bytes": storage_used,
-                "artifacts": artifacts,
-                "artifacts_truncated": len(changed) > len(artifacts),
-            }
+            return {"execution_id": execution_id, "success": result.returncode == 0 and not storage_exceeded, "exit_code": result.returncode, "stdout": stdout, "stderr": stderr, "duration_seconds": round(duration, 3), "timed_out": timed_out, "resource_limits": limits.as_dict(), "storage_used_bytes": storage_used, "artifacts": artifacts, "artifacts_truncated": len(changed) > len(artifacts)}
 
     def _storage_used(self) -> int:
-        total = 0
-        if not self.workspace.root.exists():
-            return total
-        for path in self.workspace.root.rglob("*"):
-            if path.is_file():
-                total += path.stat().st_size
-        return total
+        return sum(path.stat().st_size for path in self.workspace.root.rglob("*") if path.is_file()) if self.workspace.root.exists() else 0
 
     def _check_storage(self, limits: ResourceLimits) -> None:
-        if self._storage_used() > limits.storage_bytes:
-            raise ResourceLimitError("Workspace storage limit already exceeded")
+        if self._storage_used() > limits.storage_bytes: raise ResourceLimitError("Workspace storage limit already exceeded")
 
     def _snapshot_files(self) -> dict[str, tuple[int, int]]:
         files: dict[str, tuple[int, int]] = {}
-        if not self.workspace.root.exists():
-            return files
-        for path in self.workspace.root.rglob("*"):
-            if path.is_file():
-                stat = path.stat()
-                files[path.relative_to(self.workspace.root).as_posix()] = (stat.st_size, stat.st_mtime_ns)
+        if self.workspace.root.exists():
+            for path in self.workspace.root.rglob("*"):
+                if path.is_file():
+                    stat = path.stat(); files[path.relative_to(self.workspace.root).as_posix()] = (stat.st_size, stat.st_mtime_ns)
         return files
 
     def _artifact(self, relative_path: str) -> dict:
@@ -174,9 +121,7 @@ class DockerExecutionBackend:
 
 def _truncate(value: str, max_bytes: int) -> str:
     encoded = value.encode()
-    if len(encoded) <= max_bytes:
-        return value
-    return encoded[:max_bytes].decode(errors="replace") + "\n[output truncated]"
+    return value if len(encoded) <= max_bytes else encoded[:max_bytes].decode(errors="replace") + "\n[output truncated]"
 
 
 def _mime_type(path: Path) -> str:
