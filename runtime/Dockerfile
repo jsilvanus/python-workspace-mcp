@@ -4,7 +4,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     MPLCONFIGDIR=/tmp/matplotlib
 
-RUN useradd --create-home --uid 1000 workspace \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends coreutils \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 1000 workspace \
     && mkdir -p /workspace /tmp/matplotlib \
     && chown -R workspace:workspace /workspace /tmp/matplotlib
 

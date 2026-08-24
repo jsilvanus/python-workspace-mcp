@@ -9,15 +9,16 @@ Give AI agents a persistent Python workspace for statistics, data analysis, math
 ## Core principles
 
 1. MCP is the interface.
-2. Streamable HTTP is the transport baseline from Phase 1; stdio is not the primary architecture.
+2. Streamable HTTP is the transport baseline; stdio is not the primary architecture.
 3. The workspace is the durable abstraction; runtime processes/containers may be recreated.
 4. MCP is separated from execution backends.
 5. One monorepo, multiple deployment profiles.
 6. The MCP contract should remain stable as capabilities grow.
-7. Phase 1 is not a hostile-code sandbox; Phase 2 provides the stronger isolation and limits.
+7. Phase 1 is not a hostile-code sandbox; Phase 2 adds layered isolation and limits.
 8. Artifacts are first-class outputs.
 9. Intended open-source license: EUPL, subject to final legal review.
 10. Build the smallest useful thing first.
+11. Identity and ownership are domain concepts, independent of the future web UI.
 
 ## Deployment profiles
 
@@ -44,55 +45,60 @@ Profiles are not separate repositories or frozen software versions.
 
 ### Phase 1 — Docker-backed single workspace (`local`)
 
-**Goal:** prove the complete remote MCP workflow with one persistent Docker-backed Python workspace.
+Phase 1 is merged into `main`. It establishes the Streamable HTTP MCP server, workspace-aware API, Docker execution, persistence, file/artifact handling, API-key support, execution IDs and basic timeout handling.
 
-Scope:
-
-- Streamable HTTP MCP server.
-- One workspace, with workspace-aware API from day one.
-- Docker Python runtime.
-- Persistent workspace directory mounted into the runtime container.
-- Disposable runtime container; persistent workspace data.
-- `execute_python`.
-- `get_workspaces` — exactly one workspace initially.
-- `get_workspace`.
-- `get_system_info`.
-- Basic file operations.
-- Artifact discovery and HTTP retrieval.
-- Optional Bearer API-key authentication; strongly recommended for non-local use.
-- Execution timeout.
-- Execution IDs and structured status/stdout/stderr/artifacts.
-- Scientific Python runtime: numpy, pandas, scipy, statsmodels, sympy, matplotlib, seaborn, openpyxl.
-- Automated unit/contract tests.
-- Deployment documentation.
-
-**Explicit limitations:** no multi-workspace scheduling, CPU/RAM/disk/PID quotas, network isolation, or production-grade hostile-code sandboxing.
-
-**Success criterion:** an MCP client connects over Streamable HTTP; an agent can inspect its workspace, execute arbitrary analysis Python, persist/read data, create and retrieve useful artifacts, and retain workspace data after the runtime container is recreated.
+Phase 1 remains pending real Docker/MCP end-to-end validation before being considered production-ready.
 
 ### Phase 2 — Multi-workspace isolation + resource controls (`isolated` / `sandboxed`)
 
-- Multiple workspaces.
-- Per-workspace Docker containers and persistent storage.
-- Workspace routing and lifecycle.
-- Container recreation without data loss.
+**Goal:** provide multiple persistent workspaces with one isolated Docker runtime per workspace and configurable execution/resource limits, without changing MCP API version 1.
+
+Implementation scope:
+
+- Configuration-backed multiple workspaces.
+- Stable workspace IDs and routing.
+- One persistent workspace directory per workspace.
+- One disposable Docker container per workspace.
+- Container lifecycle and recreation.
+- Non-root runtime.
+- Network disabled by default.
+- Dropped Linux capabilities.
+- `no-new-privileges`.
+- Read-only runtime filesystem except workspace and bounded `/tmp`.
 - CPU limits.
 - Memory limits.
-- Storage/disk quotas.
-- Execution timeouts.
 - PID/process limits.
-- stdout/stderr and artifact size limits.
-- Restricted filesystem access.
-- Non-root execution.
-- Network disabled by default.
-- Workspace-level limit configuration.
-- Security regression tests.
-- Execution/resource metadata.
+- Execution timeouts.
+- Application-level storage quotas.
+- stdout/stderr size limits.
+- Artifact-count limits.
+- Workspace-scoped artifact URLs.
+- Resource metadata in execution responses.
+- **Minimal user identity and workspace ownership model.**
+- **A single configured user in Phase 2; no account-management UI yet.**
+- **API-key authentication resolves to the configured user.**
+- **Workspace operations enforce ownership internally.**
+- Security and cross-workspace regression tests.
 
-The Phase 1 MCP contract remains the external foundation; `get_workspaces` becomes genuinely multi-workspace.
+Default Phase 2 limits:
+
+```text
+CPU:                    2 cores
+Memory:                 4 GiB
+Workspace storage:      10 GiB
+Execution timeout:      60 s
+PIDs:                   128
+stdout/stderr:          2 MiB
+Artifacts/execution:    50
+```
+
+**Explicit limitation:** storage is currently an application-level quota rather than a guaranteed hard filesystem quota. A future backend can provide hard quotas where the storage/runtime supports them.
+
+**Success criterion:** two or more configured workspaces can execute independently, persist their own files, use separate runtime containers, and remain within configured CPU/memory/PID/time/output controls. Cross-workspace file access must fail.
 
 ### Phase 3 — Multi-user self-hosted (`self-hosted`)
 
+- Replace the single-user registry with persistent multi-user accounts.
 - User accounts.
 - Authentication and authorization.
 - API key creation/rotation/revocation.
@@ -124,6 +130,7 @@ The contract is workspace-aware even when Phase 1 has one workspace.
 
 ### Discovery/management
 
+- `get_user()` — stable identity of the current caller.
 - `get_workspaces()` — list workspaces visible to the caller.
 - `get_workspace(workspace_id?)` — workspace information.
 - `get_system_info()` — server/API version, deployment profile, runtime/capabilities and limits.
@@ -139,9 +146,9 @@ The contract is workspace-aware even when Phase 1 has one workspace.
 - `delete_file(path, workspace_id?)`
 - `get_file_url(path, workspace_id?)`
 
-Workspace IDs are accepted now so later profiles can activate multiple workspaces without changing tool concepts. Phase 1 may default them to its sole workspace.
+Workspace IDs are accepted now so later profiles can activate multiple workspaces without changing tool concepts.
 
-### Versioning
+## Versioning
 
 Distinguish:
 
@@ -149,115 +156,35 @@ Distinguish:
 - **API version** — MCP application contract;
 - **deployment profile** — capability/infrastructure level.
 
-Example:
-
-```text
-server_version: 0.1.0
-api_version: 1
-deployment_profile: local
-transport: streamable-http
-```
-
-## Workspace model
-
-A workspace is the persistent unit visible to the AI/user. The invariant is:
-
-```text
-workspace persists
-runtime container/process may not
-```
-
-## Execution architecture
-
-```text
-MCP transport/server
-        ↓
-Authentication
-        ↓
-Workspace service
-        ↓
-Execution backend
-        ↓
-Python runtime
-```
-
-The execution backend can evolve from a single Docker runtime to multi-workspace containers, sandboxed execution, and managed infrastructure without changing the MCP contract.
-
-## Artifact architecture
-
-```text
-Python
-  ↓
-workspace file
-  ↓
-artifact metadata
-  ↓
-authorized HTTP retrieval
-```
-
-Artifact URLs should be opaque/signed where appropriate. Artifact authorization must be independent of Python execution.
-
-## Security direction
-
-Phase 1 establishes a basic boundary but is **not** a hardened sandbox. Docker alone must not be presented as sufficient protection for arbitrary hostile Python.
-
-Phase 2 adds layered controls for filesystem escape, host credential exposure, network access, process abuse, resource exhaustion, cross-workspace access and unauthorized artifact access.
-
-## Observability
-
-Execution records should eventually contain execution ID, workspace ID, user ID where applicable, timestamps, duration, exit status, resource usage, artifacts and errors. Phase 1 establishes execution IDs and basic execution metadata.
+The external MCP contract remains API version `1` through Phase 2.
 
 ## Testing strategy
 
-### MCP
-- Streamable HTTP initialization.
-- Tool discovery and invocation.
-- Workspace-aware parameters.
+### Phase 2 isolation
 
-### Execution
-- Ordinary Python.
-- numpy/pandas/scipy.
-- Statistical analysis.
-- Plotting.
-- File creation/modification.
-- Exceptions.
-- Timeouts.
-- Artifacts.
+- Multiple configured workspaces.
+- Independent container names.
+- Independent persistent directories.
+- Cross-workspace path rejection.
+- Network unavailable inside runtime.
+- Non-root execution.
+- Read-only runtime filesystem.
+- CPU/memory/PID limits are passed to Docker correctly.
+- Execution timeout.
+- Output truncation.
+- Artifact-count limiting.
+- Storage quota behavior.
+- Container recreation without data loss.
 
-### Workspace
-- Persistence.
-- Path containment.
-- Container recreation.
-- File operations.
+### Phase 2 identity
 
-### Phase 2 security
-- Filesystem escape.
-- Network access.
-- Process abuse.
-- Resource exhaustion.
-- Cross-workspace access.
-- Artifact authorization.
-
-## Documentation structure
-
-```text
-docs/
-├── PLAN.md
-├── ARCHITECTURE.md
-├── MCP-INTERFACE.md
-├── DEPLOYMENT-PROFILES.md
-├── SECURITY.md
-├── WORKSPACES.md
-├── ARTIFACTS.md
-├── DEVELOPMENT.md
-└── ADRs/
-    ├── 0001-monorepo-and-deployment-profiles.md
-    ├── 0002-streamable-http.md
-    └── 0003-workspace-as-persistence-boundary.md
-```
-
-Do not create future-phase infrastructure merely for appearance.
+- Default user identity is stable and configurable.
+- Workspaces default to the configured user owner.
+- Explicit workspace owners are represented in configuration.
+- Unknown users are rejected.
+- Workspace operations reject ownership mismatches.
+- `get_user()` and `get_workspaces()` expose the correct identity/ownership boundary.
 
 ## Current development status
 
-Phase 1 is being developed on the `phase-1` branch. The no-shell development goal is to complete code, stable contract, tests and documentation as far as possible. Docker and end-to-end MCP execution must be validated with a real runtime before Phase 1 is considered complete.
+Phase 2 is being developed on the `phase-2` branch. The no-shell development goal is to complete the implementation, contract, tests and documentation as far as possible. Docker runtime behavior and actual resource enforcement require a real runtime for final validation.

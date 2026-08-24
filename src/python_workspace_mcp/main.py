@@ -14,75 +14,111 @@ from starlette.routing import Route
 
 from . import __version__
 from .config import Settings
-from .execution import DockerExecutionBackend
-from .workspace import Workspace, create_workspace
+from .execution import DockerExecutionBackend, ResourceLimitError
+from .users import UserManager
+from .workspaces import WorkspaceManager
 
 
 settings = Settings.from_env()
-workspace = create_workspace(settings)
-executor = DockerExecutionBackend(settings, workspace)
+users = UserManager.from_settings(settings)
+workspaces = WorkspaceManager(settings)
+executors: dict[str, DockerExecutionBackend] = {}
 
-mcp = FastMCP(
-    "Python Workspace MCP",
-    stateless_http=True,
-    json_response=True,
-)
+mcp = FastMCP("Python Workspace MCP", stateless_http=True, json_response=True)
+
+
+def _workspace(workspace_id: str | None):
+    definition = workspaces.get_definition(workspace_id)
+    _authorize_workspace(definition.owner_user_id)
+    return workspaces.get(definition.id)
+
+
+def _authorize_workspace(owner_user_id: str) -> None:
+    if owner_user_id != users.current().id:
+        raise ValueError("Workspace is not owned by the current user")
+
+
+def _executor(workspace_id: str | None) -> DockerExecutionBackend:
+    definition = workspaces.get_definition(workspace_id)
+    _authorize_workspace(definition.owner_user_id)
+    workspace = workspaces.get(definition.id)
+    if definition.id not in executors:
+        executors[definition.id] = DockerExecutionBackend(
+            image=settings.docker_image,
+            container_name=f"{settings.docker_container_prefix}-{definition.id}",
+            workspace=workspace,
+            limits=definition.limits,
+        )
+    return executors[definition.id]
+
+
+@mcp.tool()
+def get_user() -> dict:
+    """Return the authenticated user's stable identity."""
+    return users.info()
 
 
 @mcp.tool()
 def get_workspaces() -> dict:
-    """List workspaces available to the caller. Phase 1 exposes one workspace."""
-    return {"workspaces": [workspace.info()], "default_workspace_id": workspace.id}
+    """List workspaces available to the current user."""
+    return {
+        "user_id": users.current().id,
+        "workspaces": [
+            info for info in workspaces.all_info()
+            if info["owner_user_id"] == users.current().id
+        ],
+        "default_workspace_id": settings.default_workspace_id,
+    }
 
 
 @mcp.tool()
 def get_workspace(workspace_id: str | None = None) -> dict:
     """Return information about a workspace."""
-    _require_workspace(workspace_id)
-    return workspace.info()
+    _workspace(workspace_id)
+    return workspaces.info(workspace_id)
 
 
 @mcp.tool()
 def get_system_info() -> dict:
     """Return server, API, deployment-profile, runtime and capability information."""
+    default = workspaces.get_definition()
+    _authorize_workspace(default.owner_user_id)
     return {
         "server_version": __version__,
         "api_version": "1",
-        "deployment_profile": "local",
+        "deployment_profile": "sandboxed",
         "transport": "streamable-http",
-        "runtime": {
-            "execution_backend": "docker",
-            "docker_image": settings.docker_image,
-        },
-        "workspace": {"count": 1, "default_workspace_id": workspace.id},
+        "user": users.info(),
+        "runtime": {"execution_backend": "docker", "docker_image": settings.docker_image},
+        "workspace": {"count": len(workspaces.ids()), "default_workspace_id": settings.default_workspace_id},
         "capabilities": {
             "persistent_workspace": True,
-            "multiple_workspaces": False,
+            "multiple_workspaces": len(workspaces.ids()) > 1,
             "docker_execution": True,
             "artifacts": True,
-            "resource_limits": False,
-            "network_access": "not_restricted_in_phase_1",
+            "resource_limits": True,
+            "network_access": False,
+            "non_root_runtime": True,
+            "read_only_runtime_filesystem": True,
+            "multiple_users": False,
         },
-        "limits": {
-            "execution_timeout_seconds": settings.execution_timeout,
-            "cpu": None,
-            "memory_bytes": None,
-            "storage_bytes": None,
-        },
+        "limits": default.limits.as_dict(),
     }
 
 
 @mcp.tool()
 def execute_python(code: str, workspace_id: str | None = None) -> dict:
-    """Execute arbitrary Python in the Docker-backed workspace and return results and generated artifacts."""
-    _require_workspace(workspace_id)
-    return executor.execute(code)
+    """Execute Python in a workspace and return structured results and generated artifacts."""
+    try:
+        return _executor(workspace_id).execute(code)
+    except ResourceLimitError as exc:
+        return {"success": False, "error": str(exc), "resource_limit": True}
 
 
 @mcp.tool()
 def list_files(workspace_id: str | None = None, path: str = ".") -> dict:
     """List files and directories in a workspace path."""
-    _require_workspace(workspace_id)
+    workspace = _workspace(workspace_id)
     root = workspace.resolve(path)
     if not root.exists():
         raise ValueError(f"Path does not exist: {path}")
@@ -101,39 +137,34 @@ def list_files(workspace_id: str | None = None, path: str = ".") -> dict:
 
 @mcp.tool()
 def read_file(path: str, workspace_id: str | None = None) -> dict:
-    """Read a UTF-8 text file from the workspace."""
-    _require_workspace(workspace_id)
+    """Read a UTF-8 text file from a workspace."""
+    workspace = _workspace(workspace_id)
     target = workspace.resolve(path)
     if not target.is_file():
         raise ValueError(f"Not a file: {path}")
-    return {"path": path, "content": target.read_text(encoding="utf-8")}
+    return {"workspace_id": workspace.id, "path": path, "content": target.read_text(encoding="utf-8")}
 
 
 @mcp.tool()
 def delete_file(path: str, workspace_id: str | None = None) -> dict:
-    """Delete a file from the workspace."""
-    _require_workspace(workspace_id)
+    """Delete a file from a workspace."""
+    workspace = _workspace(workspace_id)
     target = workspace.resolve(path)
     if not target.is_file():
         raise ValueError(f"Not a file: {path}")
     target.unlink()
-    return {"deleted": True, "path": path}
+    return {"workspace_id": workspace.id, "deleted": True, "path": path}
 
 
 @mcp.tool()
 def get_file_url(path: str, workspace_id: str | None = None) -> dict:
-    """Return a signed URL for a workspace artifact."""
-    _require_workspace(workspace_id)
+    """Return an authorized URL for a workspace artifact."""
+    workspace = _workspace(workspace_id)
     target = workspace.resolve(path)
     if not target.is_file():
         raise ValueError(f"Not a file: {path}")
-    token = _file_token(path)
-    return {"path": path, "url": f"{settings.public_base_url}/files/{_encode_path(path)}?token={token}"}
-
-
-def _require_workspace(workspace_id: str | None) -> None:
-    if workspace_id is not None and workspace_id != workspace.id:
-        raise ValueError(f"Unknown workspace: {workspace_id}")
+    token = _file_token(workspace.id, path)
+    return {"workspace_id": workspace.id, "path": path, "url": f"{settings.public_base_url}/files/{workspace.id}/{_encode_path(path)}?token={token}"}
 
 
 def _encode_path(path: str) -> str:
@@ -148,20 +179,24 @@ def _decode_path(encoded: str) -> str:
     return "/".join(parts)
 
 
-def _file_token(path: str) -> str:
-    secret = (settings.api_key or "phase-1-local-secret").encode()
-    return hmac.new(secret, path.encode(), hashlib.sha256).hexdigest()
+def _file_token(workspace_id: str, path: str) -> str:
+    secret = (settings.api_key or "phase-2-local-secret").encode()
+    return hmac.new(secret, f"{workspace_id}\0{path}".encode(), hashlib.sha256).hexdigest()
 
 
 async def healthz(request: Request) -> Response:
-    return JSONResponse({"status": "ok", "version": __version__})
+    return JSONResponse({"status": "ok", "version": __version__, "workspaces": len(workspaces.ids())})
 
 
 async def file_download(request: Request) -> Response:
+    workspace_id = request.path_params["workspace_id"]
     encoded = request.path_params["path"]
     try:
+        definition = workspaces.get_definition(workspace_id)
+        _authorize_workspace(definition.owner_user_id)
+        workspace = workspaces.get(workspace_id)
         path = _decode_path(encoded)
-        expected = _file_token(path)
+        expected = _file_token(workspace.id, path)
         supplied = request.query_params.get("token", "")
         if not hmac.compare_digest(supplied, expected):
             return JSONResponse({"error": "invalid token"}, status_code=403)
@@ -180,18 +215,14 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
         if settings.api_key:
             supplied = request.headers.get("authorization", "")
             if not hmac.compare_digest(supplied, f"Bearer {settings.api_key}"):
-                return JSONResponse(
-                    {"error": "unauthorized"},
-                    status_code=401,
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
+                return JSONResponse({"error": "unauthorized"}, status_code=401, headers={"WWW-Authenticate": "Bearer"})
         return await call_next(request)
 
 
 app = mcp.streamable_http_app(
     custom_starlette_routes=[
         Route("/healthz", healthz, methods=["GET"]),
-        Route("/files/{path:path}", file_download, methods=["GET"]),
+        Route("/files/{workspace_id}/{path:path}", file_download, methods=["GET"]),
     ]
 )
 app.add_middleware(ApiKeyMiddleware)
