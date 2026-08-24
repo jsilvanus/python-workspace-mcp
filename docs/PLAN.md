@@ -19,6 +19,7 @@ Give AI agents a persistent Python workspace for statistics, data analysis, math
 9. Intended open-source license: EUPL, subject to final legal review.
 10. Build the smallest useful thing first.
 11. Identity and ownership are domain concepts, independent of the future web UI.
+12. The control plane may evolve independently of the MCP analysis interface.
 
 ## Deployment profiles
 
@@ -65,50 +66,37 @@ Implementation scope:
 - Dropped Linux capabilities.
 - `no-new-privileges`.
 - Read-only runtime filesystem except workspace and bounded `/tmp`.
-- CPU limits.
-- Memory limits.
-- PID/process limits.
-- Execution timeouts.
+- CPU, memory, PID, execution-time, output and artifact limits.
 - Application-level storage quotas.
-- stdout/stderr size limits.
-- Artifact-count limits.
 - Workspace-scoped artifact URLs.
 - Resource metadata in execution responses.
-- **Minimal user identity and workspace ownership model.**
-- **A single configured user in Phase 2; no account-management UI yet.**
-- **API-key authentication resolves to the configured user.**
-- **Workspace operations enforce ownership internally.**
-- Security and cross-workspace regression tests.
-
-Default Phase 2 limits:
-
-```text
-CPU:                    2 cores
-Memory:                 4 GiB
-Workspace storage:      10 GiB
-Execution timeout:      60 s
-PIDs:                   128
-stdout/stderr:          2 MiB
-Artifacts/execution:    50
-```
-
-**Explicit limitation:** storage is currently an application-level quota rather than a guaranteed hard filesystem quota. A future backend can provide hard quotas where the storage/runtime supports them.
-
-**Success criterion:** two or more configured workspaces can execute independently, persist their own files, use separate runtime containers, and remain within configured CPU/memory/PID/time/output controls. Cross-workspace file access must fail.
+- Minimal user identity and workspace ownership model.
+- A single configured user in the Phase 2 deployment.
 
 ### Phase 3 — Multi-user self-hosted (`self-hosted`)
 
-- Replace the single-user registry with persistent multi-user accounts.
-- User accounts.
-- Authentication and authorization.
-- API key creation/rotation/revocation.
-- User → workspace ownership and permissions.
-- Web control-plane UI.
-- Workspace/file/artifact management.
-- Resource/status visibility.
-- Administration and audit/event records.
+**Goal:** make the service genuinely useful for a small group of people, such as the author's friends, without requiring a web UI yet.
 
-MCP remains the primary analysis interface; the UI is a control plane.
+Implementation scope:
+
+- Persistent user registry.
+- Persistent API-key registry with hashed secrets.
+- API-key → principal → user resolution per HTTP request.
+- Multiple users sharing one service.
+- Workspace ownership and authorization enforced for every MCP workspace operation.
+- CLI control plane for user management.
+- CLI API-key creation/revocation.
+- CLI workspace creation/listing/removal.
+- Persistent workspace ownership rather than environment-only ownership.
+- Authentication-required deployment mode.
+- Per-user workspace visibility.
+- User/workspace discovery through the existing MCP API.
+- Documentation for a small shared self-hosted installation.
+- Tests for persistence, authentication and ownership boundaries.
+
+The first UI is deliberately **CLI**. A web control-plane UI is deferred until there is a real need for it.
+
+The CLI is an administration/control interface, not a replacement for MCP. Friends still use their AI/MCP client for Python work.
 
 ### Phase 4 — Hosted/SaaS (`hosted`)
 
@@ -120,6 +108,7 @@ MCP remains the primary analysis interface; the UI is a control plane.
 - Monitoring and alerting.
 - Abuse controls.
 - Scalable execution infrastructure.
+- Web control-plane UI.
 - Customer administration and support workflows.
 
 The hosted service may use the same open-source codebase; commercial value can be managed infrastructure, reliability, support and convenience.
@@ -156,35 +145,24 @@ Distinguish:
 - **API version** — MCP application contract;
 - **deployment profile** — capability/infrastructure level.
 
-The external MCP contract remains API version `1` through Phase 2.
+The external MCP contract remains API version `1` through Phase 3.
 
 ## Testing strategy
 
-### Phase 2 isolation
+### Phase 3 identity and control plane
 
-- Multiple configured workspaces.
-- Independent container names.
-- Independent persistent directories.
-- Cross-workspace path rejection.
-- Network unavailable inside runtime.
-- Non-root execution.
-- Read-only runtime filesystem.
-- CPU/memory/PID limits are passed to Docker correctly.
-- Execution timeout.
-- Output truncation.
-- Artifact-count limiting.
-- Storage quota behavior.
-- Container recreation without data loss.
-
-### Phase 2 identity
-
-- Default user identity is stable and configurable.
-- Workspaces default to the configured user owner.
-- Explicit workspace owners are represented in configuration.
-- Unknown users are rejected.
-- Workspace operations reject ownership mismatches.
-- `get_user()` and `get_workspaces()` expose the correct identity/ownership boundary.
+- Multiple persistent users.
+- API keys are never persisted in plaintext.
+- Generated API keys authenticate the correct user.
+- Revoked keys stop authenticating.
+- Users survive service restart.
+- Workspaces survive service restart.
+- User cannot access another user's workspace.
+- User sees only owned workspaces through MCP.
+- User cannot delete another user's files through MCP.
+- CLI creates and removes users/workspaces as intended.
+- User deletion is blocked while owned workspaces remain.
 
 ## Current development status
 
-Phase 2 is being developed on the `phase-2` branch. The no-shell development goal is to complete the implementation, contract, tests and documentation as far as possible. Docker runtime behavior and actual resource enforcement require a real runtime for final validation.
+Phase 3 is being developed on the `phase-3` branch. The implementation includes the persistent user/workspace state layer, per-request API-key identity, ownership enforcement and CLI control plane. It has not yet been runtime-validated; real Docker/MCP integration testing still requires a shell/runtime.
