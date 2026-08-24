@@ -16,6 +16,7 @@ from starlette.routing import Route
 from . import __version__
 from .config import Settings
 from .execution import DockerExecutionBackend, ResourceLimitError
+from .limits import ResourceLimits
 from .users import Principal, UserManager
 from .workspaces import WorkspaceManager
 
@@ -55,14 +56,48 @@ def _executor(workspace_id: str | None) -> DockerExecutionBackend:
     definition = workspaces.get_definition(workspace_id)
     _authorize_workspace(definition.owner_user_id)
     workspace = workspaces.get(definition.id)
-    if definition.id not in executors:
-        executors[definition.id] = DockerExecutionBackend(
+    executor = executors.get(definition.id)
+    if executor is None:
+        executor = DockerExecutionBackend(
             image=settings.docker_image,
             container_name=f"{settings.docker_container_prefix}-{definition.id}",
             workspace=workspace,
             limits=definition.limits,
         )
-    return executors[definition.id]
+        executors[definition.id] = executor
+    else:
+        executor.limits = definition.limits
+    return executor
+
+
+def _requested_limits(workspace_id: str | None, resources: dict | None) -> ResourceLimits | None:
+    if resources is None:
+        return None
+    if not isinstance(resources, dict):
+        raise ValueError("resources must be an object")
+    definition = workspaces.get_definition(workspace_id)
+    _authorize_workspace(definition.owner_user_id)
+    allowed = definition.maximum_limits
+    defaults = definition.limits
+    values = {
+        "cpu": defaults.cpu,
+        "memory_bytes": defaults.memory_bytes,
+        "storage_bytes": defaults.storage_bytes,
+        "execution_timeout_seconds": defaults.execution_timeout_seconds,
+        "pids": defaults.pids,
+        "max_output_bytes": defaults.max_output_bytes,
+        "max_artifacts_per_execution": defaults.max_artifacts_per_execution,
+    }
+    aliases = {"timeout": "execution_timeout_seconds", "output_bytes": "max_output_bytes", "max_artifacts": "max_artifacts_per_execution"}
+    for key, value in resources.items():
+        key = aliases.get(key, key)
+        if key not in values:
+            raise ValueError(f"Unknown resource: {key}")
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            raise ValueError(f"Resource {key} must be numeric")
+        values[key] = value
+    requested = ResourceLimits(**values)
+    return workspaces.profiles.get(definition.profile_id).validate(requested)
 
 
 @mcp.tool()
@@ -108,20 +143,28 @@ def get_system_info() -> dict:
             "docker_execution": True,
             "artifacts": True,
             "resource_limits": True,
+            "resource_profiles": True,
+            "on_demand_resources": True,
             "network_access": False,
             "non_root_runtime": True,
             "read_only_runtime_filesystem": True,
             "multiple_users": True,
         },
         "limits": default.limits.as_dict(),
+        "maximum_limits": default.maximum_limits.as_dict(),
+        "resource_profile": default.profile_id,
     }
 
 
 @mcp.tool()
-def execute_python(code: str, workspace_id: str | None = None) -> dict:
-    """Execute Python in a workspace owned by the current user."""
+def execute_python(code: str, workspace_id: str | None = None, resources: dict | None = None) -> dict:
+    """Execute Python, optionally requesting resources within the workspace profile maximums."""
     try:
-        return _executor(workspace_id).execute(code)
+        limits = _requested_limits(workspace_id, resources)
+        result = _executor(workspace_id).execute(code, limits)
+        result["resource_profile"] = workspaces.get_definition(workspace_id).profile_id
+        result["requested_resources"] = resources
+        return result
     except ResourceLimitError as exc:
         return {"success": False, "error": str(exc), "resource_limit": True}
 
