@@ -7,11 +7,10 @@ from contextvars import ContextVar
 from pathlib import Path
 
 import uvicorn
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, Response
-from starlette.routing import Route
 
 from . import __version__
 from .config import Settings
@@ -27,7 +26,9 @@ workspaces = WorkspaceManager(settings)
 executors: dict[str, DockerExecutionBackend] = {}
 _current_principal: ContextVar[Principal | None] = ContextVar("current_principal", default=None)
 
-mcp = FastMCP("Python Workspace MCP", stateless_http=True, json_response=True)
+# MCP SDK v2.  Transport configuration belongs to the app/runner rather than
+# the server object; this server is deliberately independent of HTTP details.
+mcp = MCPServer("Python Workspace MCP", version=__version__)
 
 
 def _principal() -> Principal:
@@ -133,6 +134,7 @@ def get_system_info() -> dict:
     return {
         "server_version": __version__,
         "api_version": "1",
+        "mcp_sdk_major": 2,
         "deployment_profile": "self-hosted",
         "transport": "streamable-http",
         "user": users.info(_current_user_id()),
@@ -233,10 +235,12 @@ def _file_token(workspace_id: str, path: str) -> str:
     return hmac.new(settings.file_signing_secret.encode(), f"{workspace_id}\0{path}".encode(), hashlib.sha256).hexdigest()
 
 
+@mcp.custom_route("/healthz", methods=["GET"])
 async def healthz(request: Request) -> Response:
     return JSONResponse({"status": "ok", "version": __version__, "workspaces": len(workspaces.ids())})
 
 
+@mcp.custom_route("/files/{workspace_id}/{path:path}", methods=["GET"])
 async def file_download(request: Request) -> Response:
     workspace_id = request.path_params["workspace_id"]
     encoded = request.path_params["path"]
@@ -284,10 +288,10 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
             _current_principal.reset(token)
 
 
-app = mcp.streamable_http_app(custom_starlette_routes=[
-    Route("/healthz", healthz, methods=["GET"]),
-    Route("/files/{workspace_id}/{path:path}", file_download, methods=["GET"]),
-])
+# SDK v2 exposes a single Streamable HTTP ASGI app. It handles modern
+# 2026-07-28 requests without protocol sessions and transparently serves
+# legacy MCP clients through the same endpoint.
+app = mcp.streamable_http_app(json_response=True, stateless_http=True)
 app.add_middleware(ApiKeyMiddleware)
 
 
