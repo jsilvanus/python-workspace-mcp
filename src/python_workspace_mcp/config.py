@@ -16,6 +16,8 @@ class Settings:
     workspace_name: str = "Default Workspace"
     workspace_path: Path = Path("./workspace")
     workspace_definitions: str = ""
+    state_path: Path = Path("./data/state.json")
+    require_auth: bool = False
     docker_image: str = "python-workspace-mcp-runtime:0.1"
     docker_container_prefix: str = "python-workspace-mcp"
     public_base_url: str = "http://localhost:8000"
@@ -30,6 +32,7 @@ class Settings:
     @classmethod
     def from_env(cls) -> "Settings":
         path = Path(os.getenv("PYTHON_WORKSPACE_PATH", "./workspace")).expanduser().resolve()
+        state_path = Path(os.getenv("PYTHON_WORKSPACE_STATE", "./data/state.json")).expanduser().resolve()
         return cls(
             host=os.getenv("PYTHON_WORKSPACE_HOST", "0.0.0.0"),
             port=int(os.getenv("PYTHON_WORKSPACE_PORT", "8000")),
@@ -40,6 +43,8 @@ class Settings:
             workspace_name=os.getenv("PYTHON_WORKSPACE_NAME", "Default Workspace"),
             workspace_path=path,
             workspace_definitions=os.getenv("PYTHON_WORKSPACE_WORKSPACES", ""),
+            state_path=state_path,
+            require_auth=os.getenv("PYTHON_WORKSPACE_REQUIRE_AUTH", "false").lower() in {"1", "true", "yes", "on"},
             docker_image=os.getenv("PYTHON_WORKSPACE_DOCKER_IMAGE", "python-workspace-mcp-runtime:0.1"),
             docker_container_prefix=os.getenv("PYTHON_WORKSPACE_DOCKER_PREFIX", "python-workspace-mcp"),
             public_base_url=os.getenv("PYTHON_WORKSPACE_PUBLIC_URL", "http://localhost:8000").rstrip("/"),
