@@ -1,0 +1,1 @@
+This branch is based directly on current `main` and implements the package/file capability layer. Runtime validation with Docker remains required before merge.
