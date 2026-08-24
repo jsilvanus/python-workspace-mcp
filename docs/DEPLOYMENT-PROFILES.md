@@ -6,133 +6,80 @@ Deployment profiles describe how much infrastructure and isolation is provided b
 
 | Profile | Main use | Execution | Workspaces | Users | UI |
 |---|---|---|---:|---:|---|
-| `local` | Personal/local server | Local Python | 1 | 1 | No |
-| `isolated` | Small self-hosted service | Docker | Multiple | 1 | No |
-| `sandboxed` | Safer AI-generated execution | Docker + limits | Multiple | 1 | No |
+| `local` | Personal/local server | Docker-backed Python | 1 | 1 | No |
+| `isolated` | Multiple isolated workspaces | Docker | Multiple | 1 | No |
+| `sandboxed` | Controlled AI-generated execution | Docker + limits | Multiple | 1 | No |
 | `self-hosted` | Multi-user installation | Sandboxed containers | Multiple | Multiple | Yes |
 | `hosted` | Managed SaaS | Managed execution | Multiple | Multiple | Yes |
 
 ## Local
 
-The smallest supported deployment.
+The Phase 1 profile.
 
 Characteristics:
 
 - Streamable HTTP MCP.
-- One workspace.
-- Local Python runtime.
-- Persistent local workspace directory.
-- Basic API-key protection suitable for a trusted single-user environment.
-- No Docker requirement.
+- One persistent workspace.
+- One Docker-backed Python runtime/container.
+- Runtime container may be recreated without intentionally deleting workspace data.
+- Basic API-key protection for non-local use.
+- Basic execution timeout.
+- Not a hardened hostile-code sandbox.
 
-This is the profile corresponding conceptually to the original V1 idea.
-
-It should remain available even after more advanced profiles exist.
+This is the simplest useful deployment and should remain available as the project evolves.
 
 ## Isolated
 
-Adds workspace isolation through Docker.
+Phase 2 adds multiple workspaces and stronger isolation/lifecycle management.
 
 Characteristics:
 
 - Multiple workspaces.
-- One persistent volume per workspace.
+- Per-workspace persistent storage.
 - Disposable execution containers.
-- Workspace lifecycle management.
+- Workspace routing and lifecycle management.
 - Same Streamable HTTP MCP interface.
-
-A container may be recreated without destroying workspace data.
 
 ## Sandboxed
 
-Adds explicit resource and security boundaries.
+Phase 2 also establishes explicit resource and security boundaries, potentially exposed as a stricter profile depending on deployment needs.
 
-Expected controls include:
-
-- CPU quota.
-- Memory quota.
-- Disk quota.
-- Execution timeout.
-- Process limits.
-- Non-root execution.
-- Restricted filesystem.
-- Network disabled by default.
-- Output and artifact size limits.
-
-This profile is the minimum intended basis for running arbitrary AI-generated Python for users who should not be trusted with the host system.
+Expected controls include CPU, memory, disk, execution time, process/PID, filesystem, network, output and artifact limits.
 
 ## Self-hosted
 
-Adds the control plane needed by an organization or administrator.
-
-Expected features:
+Adds the multi-user control plane:
 
 - Multiple users.
-- Authentication.
+- Authentication and authorization.
 - API-key management.
 - User/workspace ownership.
 - Web administration UI.
-- Workspace management.
-- Artifact browsing/downloads.
-- Usage information.
-- Container status and lifecycle controls.
+- Workspace and artifact management.
+- Usage and container status.
 
 ## Hosted
 
-The same system operated as a managed service.
+The same system operated as a managed service:
 
-Expected additions:
-
-- Account provisioning.
-- Subscription plans.
-- Billing.
-- Usage metering.
-- Quotas.
-- Automated workspace provisioning.
+- Account/workspace provisioning.
+- Subscription plans and billing.
+- Usage metering and quotas.
 - Backups.
 - Monitoring.
 - Abuse controls.
 - Scalable execution infrastructure.
 
-The hosted profile is a deployment/service model, not a separate implementation of the MCP concept.
-
 ## Compatibility principle
 
-A user should be able to move from a simple profile to a more capable profile without changing the conceptual MCP workflow.
-
-For example:
+A user should be able to move from a simple profile to a more capable profile without changing the conceptual MCP workflow:
 
 ```text
-local → isolated → sandboxed → self-hosted → hosted
-```
-
-The MCP client should continue to see the same fundamental concepts:
-
-```text
-connect → select workspace → execute Python → inspect artifacts
+connect → discover workspaces → select workspace → execute Python → inspect artifacts
 ```
 
 ## Versioning
 
-Normal application versions should be used for releases. Profiles should be selected independently.
+Normal application versions are used for releases. Profiles are selected independently.
 
-For example, a future release may provide:
-
-```text
-python-workspace-mcp 0.x
-  ├── local
-  ├── isolated
-  └── sandboxed
-```
-
-while a later release may provide:
-
-```text
-python-workspace-mcp 1.x
-  ├── local
-  ├── isolated
-  ├── sandboxed
-  └── self-hosted
-```
-
-A release can improve the `local` profile without turning it into a multi-user system.
+A later release can improve the `local` profile without turning it into a multi-user deployment.

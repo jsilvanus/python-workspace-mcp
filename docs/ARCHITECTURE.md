@@ -1,10 +1,8 @@
 # Architecture
 
-This document describes the intended architectural boundaries of Python Workspace MCP. It is deliberately broader than the initial implementation; future components should be introduced when their deployment profile requires them.
+Python Workspace MCP is organized around a stable MCP/workspace contract and replaceable execution infrastructure.
 
-## Core principle
-
-The MCP interface and Python execution environment are separate concerns.
+## Core architecture
 
 ```text
 MCP client / AI
@@ -13,13 +11,13 @@ MCP client / AI
 Streamable HTTP MCP server
       │
       ▼
-Authentication / authorization
+Authentication
       │
       ▼
 Workspace service
       │
       ▼
-Execution service
+Execution backend
       │
       ▼
 Python runtime
@@ -28,39 +26,37 @@ Python runtime
 Persistent workspace storage
 ```
 
-The execution backend may evolve without changing the fundamental workspace or MCP concepts.
+The MCP server must not become tightly coupled to one Python execution implementation.
 
-## Workspace as the persistence boundary
+## Workspace as persistence boundary
 
-A workspace is the durable unit of user data and state.
+A workspace is the durable unit of user data.
 
 ```text
-Workspace
-├── input/data
-├── output/artifacts
-├── scratch
-└── metadata
+workspace persists
+container/process may not
 ```
 
-A Python process or container is disposable. Workspace data is not.
-
-This allows execution environments to be stopped, recreated, upgraded, or moved without destroying the user's work.
+This lets execution environments be stopped, recreated, upgraded or moved without destroying user work.
 
 ## Deployment evolution
 
-### Local
+### Local — Phase 1
 
 ```text
 HTTP MCP
    │
    ▼
-Workspace
+Single Workspace
    │
    ▼
-Local Python
+Docker Python container
+   │
+   ▼
+Persistent host workspace
 ```
 
-### Isolated
+### Isolated + sandboxed — Phase 2
 
 ```text
 HTTP MCP
@@ -68,41 +64,37 @@ HTTP MCP
    ▼
 Workspace router
    │
-   ├── Workspace A → Docker container + volume
-   ├── Workspace B → Docker container + volume
-   └── Workspace C → Docker container + volume
+   ├── Workspace A → isolated container + persistent storage
+   ├── Workspace B → isolated container + persistent storage
+   └── Workspace C → isolated container + persistent storage
+
+Execution layer additionally enforces CPU/RAM/disk/PID/time/network/filesystem limits.
 ```
 
-### Sandboxed
-
-The isolated architecture gains explicit resource and security boundaries.
-
-### Self-hosted
+### Self-hosted — Phase 3
 
 ```text
 HTTP MCP
    │
    ▼
-Authentication
+Authentication / authorization
    │
    ▼
 User / Workspace routing
    │
    ▼
-Execution service
-   │
-   └── sandboxed containers
+Sandboxed execution service
 ```
 
-### Hosted
+### Hosted — Phase 4
 
-The same logical architecture is operated as a service, with provisioning, quotas, metering, billing, monitoring, and scalable execution infrastructure around it.
+The same logical architecture is operated as a managed service with provisioning, quotas, metering, billing, monitoring and scalable execution infrastructure.
 
 ## Monorepo boundary
 
-The project is one monorepo. Deployment profiles are configurations and compositions of the same core capabilities, not separate projects.
+The project is one monorepo. Deployment profiles are configurations/compositions of shared capabilities, not separate projects.
 
-Target components:
+Target capabilities include:
 
 - MCP server
 - workspace service
@@ -113,21 +105,15 @@ Target components:
 - web control plane
 - background worker/scheduler
 
-These should become separate packages/services only when their independent lifecycle or security boundary justifies it.
+They should become separate packages/services only when an independent lifecycle or security boundary justifies it.
 
 ## Transport
 
-Streamable HTTP is the project transport baseline from the first implementation. The project is intended to be remotely accessible from the beginning.
-
-Do not design the core around a stdio-only process and retrofit HTTP later.
+Streamable HTTP is the primary MCP transport from the first implementation. Do not design the core around stdio and retrofit HTTP later.
 
 ## Execution boundary
 
-The MCP server must not become tightly coupled to Python subprocess details.
-
-Define an execution abstraction capable of accepting code plus workspace context and returning structured results.
-
-Conceptually:
+Define an execution abstraction accepting code plus workspace context and returning structured results.
 
 ```text
 ExecutionRequest
@@ -144,29 +130,25 @@ ExecutionResult
 └── artifacts
 ```
 
-Phase 1 may implement this with a local Python process. Later profiles can implement it using containers or a remote execution service.
+Phase 1 implements this boundary with a Docker execution backend. Later profiles can add multi-workspace containers, stronger sandboxing or remote execution workers.
 
 ## Artifact boundary
-
-Generated files should be handled independently from Python's HTTP serving behavior.
 
 ```text
 Python
   ↓
 workspace file
   ↓
-artifact manager
+artifact metadata
   ↓
-metadata / authorization
-  ↓
-HTTP retrieval
+authorized HTTP retrieval
 ```
 
-The artifact service owns safe access to generated files.
+Artifact access is separate from Python's execution behavior.
 
 ## Future scaling boundary
 
-Do not prematurely introduce distributed infrastructure in the local profile. However, the architecture should leave room for:
+The architecture leaves room for:
 
 ```text
 MCP gateway
@@ -179,17 +161,15 @@ workspace scheduler
      └── execution worker C
 ```
 
-A persistent workspace can then be attached to whatever execution worker is selected.
+A persistent workspace can be attached to whichever execution worker is selected.
 
 ## Architectural invariants
 
-The following should remain true as the project evolves:
-
 1. Streamable HTTP is the primary MCP transport.
 2. Workspace identity is independent of container identity.
-3. Workspace storage is persistent even when execution environments are disposable.
+3. Workspace storage is persistent while execution environments are disposable.
 4. MCP transport is independent of Python execution implementation.
 5. Artifact access is authorized independently of Python code.
 6. User/workspace isolation is enforced below the model/agent layer.
-7. Resource limits are enforced by the execution infrastructure, not merely by Python conventions.
+7. Resource limits are enforced by execution infrastructure, not Python conventions.
 8. Deployment profiles share the same conceptual APIs and core components.

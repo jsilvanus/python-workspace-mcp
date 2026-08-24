@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "python-workspace-mcp"
+version = "0.1.0"
+description = "A Docker-backed persistent Python workspace exposed through MCP."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "EUPL-1.2" }
+dependencies = [
+    "mcp>=2.0,<3",
+    "starlette>=0.47",
+    "uvicorn[standard]>=0.35",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+python-workspace-mcp = "python_workspace_mcp.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/python_workspace_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
