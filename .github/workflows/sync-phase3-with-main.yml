@@ -1,0 +1,32 @@
+name: Sync phase-3 with main
+
+on:
+  push:
+    branches: [phase-3]
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout phase-3
+        uses: actions/checkout@v4
+        with:
+          ref: phase-3
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Merge main into phase-3
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main phase-3
+          git checkout phase-3
+          if git merge-base --is-ancestor origin/main HEAD; then
+            echo "main is already an ancestor of phase-3"
+            exit 0
+          fi
+          git merge --no-edit origin/main
+          git push origin phase-3
