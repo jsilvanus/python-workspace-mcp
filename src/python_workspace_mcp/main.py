@@ -20,17 +20,11 @@ from .workspaces import WorkspaceManager
 
 
 settings = Settings.from_env()
-users = UserManager.from_settings(settings) if hasattr(UserManager, "from_settings") else UserManager(
-    __import__("python_workspace_mcp.users", fromlist=["User"]).User(settings.user_id, settings.user_name)
-)
+users = UserManager.from_settings(settings)
 workspaces = WorkspaceManager(settings)
 executors: dict[str, DockerExecutionBackend] = {}
 
-mcp = FastMCP(
-    "Python Workspace MCP",
-    stateless_http=True,
-    json_response=True,
-)
+mcp = FastMCP("Python Workspace MCP", stateless_http=True, json_response=True)
 
 
 def _workspace(workspace_id: str | None):
@@ -49,10 +43,9 @@ def _executor(workspace_id: str | None) -> DockerExecutionBackend:
     _authorize_workspace(definition.owner_user_id)
     workspace = workspaces.get(definition.id)
     if definition.id not in executors:
-        container_name = f"{settings.docker_container_prefix}-{definition.id}"
         executors[definition.id] = DockerExecutionBackend(
             image=settings.docker_image,
-            container_name=container_name,
+            container_name=f"{settings.docker_container_prefix}-{definition.id}",
             workspace=workspace,
             limits=definition.limits,
         )
@@ -96,14 +89,8 @@ def get_system_info() -> dict:
         "deployment_profile": "sandboxed",
         "transport": "streamable-http",
         "user": users.info(),
-        "runtime": {
-            "execution_backend": "docker",
-            "docker_image": settings.docker_image,
-        },
-        "workspace": {
-            "count": len(workspaces.ids()),
-            "default_workspace_id": settings.default_workspace_id,
-        },
+        "runtime": {"execution_backend": "docker", "docker_image": settings.docker_image},
+        "workspace": {"count": len(workspaces.ids()), "default_workspace_id": settings.default_workspace_id},
         "capabilities": {
             "persistent_workspace": True,
             "multiple_workspaces": len(workspaces.ids()) > 1,
@@ -177,11 +164,7 @@ def get_file_url(path: str, workspace_id: str | None = None) -> dict:
     if not target.is_file():
         raise ValueError(f"Not a file: {path}")
     token = _file_token(workspace.id, path)
-    return {
-        "workspace_id": workspace.id,
-        "path": path,
-        "url": f"{settings.public_base_url}/files/{workspace.id}/{_encode_path(path)}?token={token}",
-    }
+    return {"workspace_id": workspace.id, "path": path, "url": f"{settings.public_base_url}/files/{workspace.id}/{_encode_path(path)}?token={token}"}
 
 
 def _encode_path(path: str) -> str:
@@ -198,8 +181,7 @@ def _decode_path(encoded: str) -> str:
 
 def _file_token(workspace_id: str, path: str) -> str:
     secret = (settings.api_key or "phase-2-local-secret").encode()
-    payload = f"{workspace_id}\0{path}".encode()
-    return hmac.new(secret, payload, hashlib.sha256).hexdigest()
+    return hmac.new(secret, f"{workspace_id}\0{path}".encode(), hashlib.sha256).hexdigest()
 
 
 async def healthz(request: Request) -> Response:
@@ -233,11 +215,7 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
         if settings.api_key:
             supplied = request.headers.get("authorization", "")
             if not hmac.compare_digest(supplied, f"Bearer {settings.api_key}"):
-                return JSONResponse(
-                    {"error": "unauthorized"},
-                    status_code=401,
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
+                return JSONResponse({"error": "unauthorized"}, status_code=401, headers={"WWW-Authenticate": "Bearer"})
         return await call_next(request)
 
 
