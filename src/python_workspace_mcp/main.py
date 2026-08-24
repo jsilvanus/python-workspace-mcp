@@ -15,10 +15,14 @@ from starlette.routing import Route
 from . import __version__
 from .config import Settings
 from .execution import DockerExecutionBackend, ResourceLimitError
+from .users import UserManager
 from .workspaces import WorkspaceManager
 
 
 settings = Settings.from_env()
+users = UserManager.from_settings(settings) if hasattr(UserManager, "from_settings") else UserManager(
+    __import__("python_workspace_mcp.users", fromlist=["User"]).User(settings.user_id, settings.user_name)
+)
 workspaces = WorkspaceManager(settings)
 executors: dict[str, DockerExecutionBackend] = {}
 
@@ -30,11 +34,19 @@ mcp = FastMCP(
 
 
 def _workspace(workspace_id: str | None):
-    return workspaces.get(workspace_id)
+    definition = workspaces.get_definition(workspace_id)
+    _authorize_workspace(definition.owner_user_id)
+    return workspaces.get(definition.id)
+
+
+def _authorize_workspace(owner_user_id: str) -> None:
+    if owner_user_id != users.current().id:
+        raise ValueError("Workspace is not owned by the current user")
 
 
 def _executor(workspace_id: str | None) -> DockerExecutionBackend:
     definition = workspaces.get_definition(workspace_id)
+    _authorize_workspace(definition.owner_user_id)
     workspace = workspaces.get(definition.id)
     if definition.id not in executors:
         container_name = f"{settings.docker_container_prefix}-{definition.id}"
@@ -48,10 +60,20 @@ def _executor(workspace_id: str | None) -> DockerExecutionBackend:
 
 
 @mcp.tool()
+def get_user() -> dict:
+    """Return the authenticated user's stable identity."""
+    return users.info()
+
+
+@mcp.tool()
 def get_workspaces() -> dict:
-    """List workspaces available to the caller."""
+    """List workspaces available to the current user."""
     return {
-        "workspaces": workspaces.all_info(),
+        "user_id": users.current().id,
+        "workspaces": [
+            info for info in workspaces.all_info()
+            if info["owner_user_id"] == users.current().id
+        ],
         "default_workspace_id": settings.default_workspace_id,
     }
 
@@ -59,6 +81,7 @@ def get_workspaces() -> dict:
 @mcp.tool()
 def get_workspace(workspace_id: str | None = None) -> dict:
     """Return information about a workspace."""
+    _workspace(workspace_id)
     return workspaces.info(workspace_id)
 
 
@@ -66,11 +89,13 @@ def get_workspace(workspace_id: str | None = None) -> dict:
 def get_system_info() -> dict:
     """Return server, API, deployment-profile, runtime and capability information."""
     default = workspaces.get_definition()
+    _authorize_workspace(default.owner_user_id)
     return {
         "server_version": __version__,
         "api_version": "1",
         "deployment_profile": "sandboxed",
         "transport": "streamable-http",
+        "user": users.info(),
         "runtime": {
             "execution_backend": "docker",
             "docker_image": settings.docker_image,
@@ -88,6 +113,7 @@ def get_system_info() -> dict:
             "network_access": False,
             "non_root_runtime": True,
             "read_only_runtime_filesystem": True,
+            "multiple_users": False,
         },
         "limits": default.limits.as_dict(),
     }
@@ -184,6 +210,8 @@ async def file_download(request: Request) -> Response:
     workspace_id = request.path_params["workspace_id"]
     encoded = request.path_params["path"]
     try:
+        definition = workspaces.get_definition(workspace_id)
+        _authorize_workspace(definition.owner_user_id)
         workspace = workspaces.get(workspace_id)
         path = _decode_path(encoded)
         expected = _file_token(workspace.id, path)
