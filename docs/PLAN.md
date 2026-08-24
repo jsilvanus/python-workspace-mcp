@@ -18,6 +18,7 @@ Give AI agents a persistent Python workspace for statistics, data analysis, math
 8. Artifacts are first-class outputs.
 9. Intended open-source license: EUPL, subject to final legal review.
 10. Build the smallest useful thing first.
+11. Identity and ownership are domain concepts, independent of the future web UI.
 
 ## Deployment profiles
 
@@ -73,6 +74,10 @@ Implementation scope:
 - Artifact-count limits.
 - Workspace-scoped artifact URLs.
 - Resource metadata in execution responses.
+- **Minimal user identity and workspace ownership model.**
+- **A single configured user in Phase 2; no account-management UI yet.**
+- **API-key authentication resolves to the configured user.**
+- **Workspace operations enforce ownership internally.**
 - Security and cross-workspace regression tests.
 
 Default Phase 2 limits:
@@ -93,6 +98,7 @@ Artifacts/execution:    50
 
 ### Phase 3 — Multi-user self-hosted (`self-hosted`)
 
+- Replace the single-user registry with persistent multi-user accounts.
 - User accounts.
 - Authentication and authorization.
 - API key creation/rotation/revocation.
@@ -124,6 +130,7 @@ The contract is workspace-aware even when Phase 1 has one workspace.
 
 ### Discovery/management
 
+- `get_user()` — stable identity of the current caller.
 - `get_workspaces()` — list workspaces visible to the caller.
 - `get_workspace(workspace_id?)` — workspace information.
 - `get_system_info()` — server/API version, deployment profile, runtime/capabilities and limits.
@@ -168,6 +175,15 @@ The external MCP contract remains API version `1` through Phase 2.
 - Artifact-count limiting.
 - Storage quota behavior.
 - Container recreation without data loss.
+
+### Phase 2 identity
+
+- Default user identity is stable and configurable.
+- Workspaces default to the configured user owner.
+- Explicit workspace owners are represented in configuration.
+- Unknown users are rejected.
+- Workspace operations reject ownership mismatches.
+- `get_user()` and `get_workspaces()` expose the correct identity/ownership boundary.
 
 ## Current development status
 
