@@ -5,3 +5,5 @@ __pycache__/
 .env
 workspace/*
 !workspace/.gitkeep
+data/state.json
+data/*.json
