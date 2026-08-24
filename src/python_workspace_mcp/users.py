@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .config import Settings
 
 
 @dataclass(frozen=True)
@@ -29,6 +33,10 @@ class UserManager:
 
     def __init__(self, user: User) -> None:
         self._user = user
+
+    @classmethod
+    def from_settings(cls, settings: Settings) -> "UserManager":
+        return cls(User(id=settings.user_id, name=settings.user_name))
 
     def get(self, user_id: str | None = None) -> User:
         if user_id is None or user_id == self._user.id:
