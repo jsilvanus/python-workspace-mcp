@@ -18,6 +18,7 @@ class Settings:
     workspace_definitions: str = ""
     state_path: Path = Path("./data/state.json")
     require_auth: bool = False
+    file_signing_secret: str = "change-me"
     docker_image: str = "python-workspace-mcp-runtime:0.1"
     docker_container_prefix: str = "python-workspace-mcp"
     public_base_url: str = "http://localhost:8000"
@@ -45,6 +46,7 @@ class Settings:
             workspace_definitions=os.getenv("PYTHON_WORKSPACE_WORKSPACES", ""),
             state_path=state_path,
             require_auth=os.getenv("PYTHON_WORKSPACE_REQUIRE_AUTH", "false").lower() in {"1", "true", "yes", "on"},
+            file_signing_secret=os.getenv("PYTHON_WORKSPACE_FILE_SIGNING_SECRET", "change-me"),
             docker_image=os.getenv("PYTHON_WORKSPACE_DOCKER_IMAGE", "python-workspace-mcp-runtime:0.1"),
             docker_container_prefix=os.getenv("PYTHON_WORKSPACE_DOCKER_PREFIX", "python-workspace-mcp"),
             public_base_url=os.getenv("PYTHON_WORKSPACE_PUBLIC_URL", "http://localhost:8000").rstrip("/"),
