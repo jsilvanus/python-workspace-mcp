@@ -18,16 +18,15 @@ class WorkspaceDefinition:
 
 
 class WorkspaceManager:
-    """Phase 2 workspace registry.
-
-    Workspace definitions are currently configuration-backed. This keeps the
-    runtime API ready for a database-backed registry in a later phase without
-    making the MCP layer depend on storage details.
-    """
+    """Configuration-backed registry of persistent workspaces."""
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self._definitions = self._load_definitions()
+        if settings.default_workspace_id not in self._definitions:
+            raise ValueError(
+                f"Default workspace is not configured: {settings.default_workspace_id}"
+            )
 
     def _load_definitions(self) -> dict[str, WorkspaceDefinition]:
         definitions: dict[str, WorkspaceDefinition] = {}
@@ -41,6 +40,8 @@ class WorkspaceManager:
                 raise ValueError("PYTHON_WORKSPACE_WORKSPACES entries must be id:name:path")
             workspace_id, name, root = parts
             self._validate_id(workspace_id)
+            if workspace_id in definitions:
+                raise ValueError(f"Duplicate workspace id: {workspace_id}")
             definitions[workspace_id] = WorkspaceDefinition(
                 id=workspace_id,
                 name=name,
@@ -50,7 +51,7 @@ class WorkspaceManager:
         if not definitions:
             definitions["default"] = WorkspaceDefinition(
                 id="default",
-                name="Default Workspace",
+                name=self.settings.workspace_name,
                 root=self.settings.workspace_path,
                 limits=self._limits_for("default"),
             )
@@ -85,18 +86,17 @@ class WorkspaceManager:
     def get(self, workspace_id: str | None = None) -> Workspace:
         definition = self.get_definition(workspace_id)
         definition.root.mkdir(parents=True, exist_ok=True)
-        return Workspace(
-            id=definition.id,
-            name=definition.name,
-            root=definition.root,
-        )
+        return Workspace(id=definition.id, name=definition.name, root=definition.root)
 
     def info(self, workspace_id: str | None = None) -> dict:
         definition = self.get_definition(workspace_id)
         workspace = self.get(definition.id)
         info = workspace.info()
         info["limits"] = definition.limits.as_dict()
-        info["runtime"] = {"backend": "docker"}
+        info["runtime"] = {
+            "backend": "docker",
+            "container": f"{self.settings.docker_container_prefix}-{definition.id}",
+        }
         return info
 
     def all_info(self) -> list[dict]:
