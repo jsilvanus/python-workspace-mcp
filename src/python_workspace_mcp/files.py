@@ -35,7 +35,10 @@ class FileCatalog:
                 stat = path.stat()
                 if file_id and file_id in files:
                     record = files[file_id]
+                    changed = record.get("size_bytes") != stat.st_size or record.get("modified_at") != stat.st_mtime
                     record.update({"size_bytes": stat.st_size, "modified_at": stat.st_mtime, "mime_type": _mime_type(path), "deleted_at": None})
+                    if changed:
+                        record["version"] = int(record.get("version", 1)) + 1
                 else:
                     file_id = f"f_{uuid.uuid4().hex}"
                     files[file_id] = {

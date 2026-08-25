@@ -9,7 +9,7 @@ from python_workspace_mcp.workspaces import WorkspaceManager
 
 
 def test_default_manager_has_one_workspace(tmp_path: Path):
-    settings = Settings(workspace_path=tmp_path)
+    settings = Settings(workspace_path=tmp_path, state_path=tmp_path / "state.json")
     manager = WorkspaceManager(settings)
     assert manager.ids() == ["default"]
     assert manager.info()["id"] == "default"
@@ -21,6 +21,7 @@ def test_manager_loads_multiple_workspaces(tmp_path: Path):
         workspace_definitions=(
             f"stats:Statistics:{tmp_path / 'stats'},sim:Simulation:{tmp_path / 'sim'}"
         ),
+        state_path=tmp_path / "state.json",
     )
     manager = WorkspaceManager(settings)
     assert manager.ids() == ["stats", "sim"]
@@ -30,14 +31,15 @@ def test_manager_loads_multiple_workspaces(tmp_path: Path):
 
 def test_manager_rejects_invalid_workspace_id(tmp_path: Path):
     settings = Settings(
-        workspace_definitions=f"../bad:Bad:{tmp_path / 'bad'}"
+        workspace_definitions=f"../bad:Bad:{tmp_path / 'bad'}",
+        state_path=tmp_path / "state.json",
     )
     with pytest.raises(ValueError):
         WorkspaceManager(settings)
 
 
 def test_manager_rejects_unknown_workspace(tmp_path: Path):
-    manager = WorkspaceManager(Settings(workspace_path=tmp_path))
+    manager = WorkspaceManager(Settings(workspace_path=tmp_path, state_path=tmp_path / "state.json"))
     with pytest.raises(ValueError):
         manager.get("missing")
 
@@ -46,6 +48,7 @@ def test_manager_rejects_default_not_configured(tmp_path: Path):
     settings = Settings(
         default_workspace_id="missing",
         workspace_definitions=f"stats:Statistics:{tmp_path / 'stats'}",
+        state_path=tmp_path / "state.json",
     )
     with pytest.raises(ValueError):
         WorkspaceManager(settings)

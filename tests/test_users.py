@@ -41,7 +41,15 @@ def test_workspace_defaults_to_configured_user(tmp_path: Path) -> None:
 
 
 def test_workspace_can_explicitly_name_owner(tmp_path: Path) -> None:
-    manager = WorkspaceManager(settings(tmp_path, "stats:Stats:/tmp/stats:alice"))
+    workspace_settings = Settings(
+        user_id="alice",
+        user_name="Alice",
+        workspace_path=tmp_path / "default",
+        workspace_definitions="stats:Stats:/tmp/stats:alice",
+        state_path=tmp_path / "state.json",
+        default_workspace_id="stats",
+    )
+    manager = WorkspaceManager(workspace_settings)
     assert manager.get_definition("stats").owner_user_id == "alice"
 
 
