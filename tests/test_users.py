@@ -17,8 +17,15 @@ def settings(tmp_path: Path, workspaces: str = "") -> Settings:
     )
 
 
+def test_configured_user_is_not_created_automatically(tmp_path: Path) -> None:
+    manager = UserManager.from_settings(settings(tmp_path))
+    with pytest.raises(ValueError, match="Unknown user"):
+        manager.current()
+
+
 def test_user_manager_returns_stable_identity(tmp_path: Path) -> None:
     manager = UserManager.from_settings(settings(tmp_path))
+    manager.create_user("alice", "Alice")
     assert manager.info() == {"id": "alice", "name": "Alice"}
     assert manager.current().id == "alice"
     assert manager.get("alice") == manager.current()

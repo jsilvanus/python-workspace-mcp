@@ -32,6 +32,12 @@ Build the Python runtime:
 docker build -t python-workspace-mcp-runtime:0.1 runtime/
 ```
 
+Create the server's user (the server never creates one on its own — see `docs/USER-MODEL.md`):
+
+```bash
+python-workspace user add default "Default User"
+```
+
 Start the MCP server:
 
 ```bash

@@ -1,4 +1,14 @@
+from python_workspace_mcp import main
 from python_workspace_mcp.main import _decode_path, _encode_path, get_system_info, get_workspaces
+
+
+def setup_module(module):
+    # The server no longer creates its configured user automatically; a real
+    # deployment provisions it via `python-workspace user add` before start.
+    try:
+        main.users.get(main.settings.user_id)
+    except ValueError:
+        main.users.create_user(main.settings.user_id, main.settings.user_name)
 
 
 def test_file_path_encoding_round_trips():
