@@ -29,13 +29,6 @@ class UserManager:
     def __init__(self, store: StateStore, settings: Settings) -> None:
         self.store = store
         self.settings = settings
-        state = store.load()
-        if not state["users"]:
-            state["users"][settings.user_id] = {"name": settings.user_name}
-            store.save(state)
-        elif settings.user_id not in state["users"]:
-            state["users"][settings.user_id] = {"name": settings.user_name}
-            store.save(state)
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "UserManager":

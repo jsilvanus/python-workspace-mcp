@@ -6,7 +6,11 @@ Phase 2 introduces the user concept without implementing a full account system. 
 
 ## Phase 2 model
 
-There is exactly one configured user by default:
+The server never creates a user on its own. Users only come into existence through an explicit CLI command:
+
+```bash
+python-workspace user add default "Default User"
+```
 
 ```text
 User: default / Default User
@@ -15,10 +19,12 @@ User: default / Default User
   +-- Workspace B
 ```
 
-The user can be configured with:
+The service's own identity — the user it resolves requests to when no per-user API key is presented — is configured with:
 
 - `PYTHON_WORKSPACE_USER_ID`
 - `PYTHON_WORKSPACE_USER_NAME`
+
+That identity must be created via `python-workspace user add <id> <name>` (matching `PYTHON_WORKSPACE_USER_ID`/`PYTHON_WORKSPACE_USER_NAME`) before the server can serve any request for it; until then, MCP calls that fall back to it fail with `Unknown user`. The default workspace is still created automatically from `PYTHON_WORKSPACE_PATH` when no `PYTHON_WORKSPACE_WORKSPACES` are configured (see `docs/PHASE-2.md`), but it is only usable once its owning user exists.
 
 Configured workspaces can optionally specify an owner as a fourth field:
 
@@ -26,11 +32,11 @@ Configured workspaces can optionally specify an owner as a fourth field:
 id:name:path:owner_user_id
 ```
 
-The three-field form remains valid and assigns the configured default user as owner.
+The three-field form remains valid and assigns the configured service user as owner. That user still has to be created separately via the CLI.
 
 ## Authentication
 
-Phase 2 retains the single Bearer API key configured by `PYTHON_WORKSPACE_API_KEY`. That key currently resolves to the single configured user.
+Phase 2 retains the single Bearer API key configured by `PYTHON_WORKSPACE_API_KEY`. That key currently resolves to the configured service user, and resolution fails the same way if that user hasn't been created yet.
 
 This is intentionally not a multi-user authentication system yet. Phase 3 will introduce real users, multiple credentials, credential management, roles and account administration.
 

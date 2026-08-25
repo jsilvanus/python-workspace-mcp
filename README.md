@@ -32,6 +32,12 @@ Build the Python runtime:
 docker build -t python-workspace-mcp-runtime:0.1 runtime/
 ```
 
+Create the server's user (the server never creates one on its own — see `docs/USER-MODEL.md`):
+
+```bash
+python-workspace user add default "Default User"
+```
+
 Start the MCP server:
 
 ```bash
@@ -45,6 +51,14 @@ http://localhost:8000/mcp
 ```
 
 For a non-local deployment, set `PYTHON_WORKSPACE_API_KEY` and connect with `Authorization: Bearer <key>`.
+
+To generate ready-to-paste client configuration (VS Code `mcp.json`, `claude mcp add`/`.mcp.json`, or a plain URL + headers block), run:
+
+```bash
+python-workspace mcp-config
+```
+
+Add `--create-key-for <user_id>` to mint a fresh API key and embed it, `--api-key <key>` to embed one you already have, `--format {vscode,claude-code,url}` to print just one format, and `--base-url` if the server is reachable at a different address than `PYTHON_WORKSPACE_PUBLIC_URL`.
 
 ## MCP surface
 
