@@ -1,5 +1,7 @@
 # Python Workspace MCP
 
+[![CI](https://github.com/jsilvanus/python-workspace-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/jsilvanus/python-workspace-mcp/actions/workflows/ci.yml)
+
 A persistent Python analysis workspace exposed to AI agents through Model Context Protocol (MCP).
 
 Phase 1 provides a single Docker-backed workspace over **Streamable HTTP**. The MCP API is intentionally workspace-aware from the beginning so later deployment profiles can add multiple workspaces without redesigning the contract.
