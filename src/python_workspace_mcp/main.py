@@ -118,15 +118,28 @@ def get_system_info() -> dict:
     return {"server_version": __version__, "api_version": "1", "mcp_sdk_major": 2, "deployment_profile": "self-hosted", "transport": "streamable-http", "user": users.info(_current_user_id()), "runtime": {"execution_backend": "docker", "docker_image": settings.docker_image}, "workspace": {"count": len(visible), "default_workspace_id": settings.default_workspace_id}, "capabilities": {"persistent_workspace": True, "multiple_workspaces": len(visible) > 1, "docker_execution": True, "artifacts": True, "resource_limits": True, "resource_profiles": True, "on_demand_resources": True, "network_access": False, "non_root_runtime": True, "read_only_runtime_filesystem": True, "multiple_users": True}, "limits": default.limits.as_dict(), "maximum_limits": default.maximum_limits.as_dict(), "resource_profile": default.profile_id}
 
 
+def _execution_response(result: dict, workspace_id: str | None, resources: dict | None) -> dict:
+    result["resource_profile"] = workspaces.get_definition(workspace_id).profile_id
+    result["requested_resources"] = resources
+    return result
+
+
 @mcp.tool()
 def execute_python(code: str, workspace_id: str | None = None, resources: dict | None = None) -> dict:
-    """Execute Python, optionally requesting resources within the workspace profile maximums."""
+    """Execute ephemeral Python code in the workspace sandbox. Code is not saved as a workspace file."""
     try:
         limits = _requested_limits(workspace_id, resources)
-        result = _executor(workspace_id).execute(code, limits)
-        result["resource_profile"] = workspaces.get_definition(workspace_id).profile_id
-        result["requested_resources"] = resources
-        return result
+        return _execution_response(_executor(workspace_id).execute(code, limits), workspace_id, resources)
+    except ResourceLimitError as exc:
+        return {"success": False, "error": str(exc), "resource_limit": True}
+
+
+@mcp.tool()
+def execute_file(path: str, workspace_id: str | None = None, resources: dict | None = None) -> dict:
+    """Execute a persistent .py file from the workspace. No process arguments are accepted."""
+    try:
+        limits = _requested_limits(workspace_id, resources)
+        return _execution_response(_executor(workspace_id).execute_file(path, limits), workspace_id, resources)
     except ResourceLimitError as exc:
         return {"success": False, "error": str(exc), "resource_limit": True}
 
