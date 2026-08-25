@@ -15,6 +15,8 @@ from starlette.responses import FileResponse, JSONResponse, Response
 from . import __version__
 from .config import Settings
 from .execution import DockerExecutionBackend, ResourceLimitError
+from .execution_history import ExecutionHistory
+from .files import FileCatalog
 from .limits import ResourceLimits
 from .users import Principal, UserManager
 from .workspaces import WorkspaceManager
@@ -22,6 +24,8 @@ from .workspaces import WorkspaceManager
 settings = Settings.from_env()
 users = UserManager.from_settings(settings)
 workspaces = WorkspaceManager(settings)
+file_catalog = FileCatalog(settings.files_state_path)
+execution_history = ExecutionHistory(settings.executions_state_path, settings.execution_history_limit)
 executors: dict[str, DockerExecutionBackend] = {}
 _current_principal: ContextVar[Principal | None] = ContextVar("current_principal", default=None)
 mcp = MCPServer("Python Workspace MCP", version=__version__)
@@ -80,6 +84,31 @@ def _requested_limits(workspace_id: str | None, resources: dict | None) -> Resou
     return workspaces.profiles.get(definition.profile_id).validate(ResourceLimits(**values))
 
 
+def _file_uri(workspace_id: str, file_id: str) -> str:
+    return f"workspace://{workspace_id}/file/{file_id}"
+
+
+def _execution_files(workspace_id: str, changes: dict[str, list[dict]]) -> dict[str, list[dict]]:
+    result: dict[str, list[dict]] = {"created": [], "modified": [], "deleted": []}
+    for kind, records in changes.items():
+        for record in records:
+            item = dict(record)
+            item["uri"] = _file_uri(workspace_id, record["file_id"])
+            result[kind].append(item)
+    return result
+
+
+def _finish_execution(result: dict, workspace_id: str | None, resources: dict | None, execution_type: str, file_id: str | None = None) -> dict:
+    actual_workspace_id = result["workspace_id"]
+    workspace = workspaces.get(actual_workspace_id)
+    changes = file_catalog.reconcile_changes(workspace, result.get("files", {}).get("created", []), result.get("files", {}).get("modified", []), result.get("files", {}).get("deleted", []))
+    result["files"] = _execution_files(actual_workspace_id, changes)
+    result["resource_profile"] = workspaces.get_definition(workspace_id).profile_id
+    result["requested_resources"] = resources
+    execution_history.record(result, user_id=_current_user_id(), execution_type=execution_type, file_id=file_id)
+    return result
+
+
 @mcp.tool()
 def get_user() -> dict:
     """Return the authenticated user's stable identity."""
@@ -115,13 +144,7 @@ def get_system_info() -> dict:
     """Return server, API, deployment-profile, runtime and capability information."""
     visible = [w for w in workspaces.all_info() if w["owner_user_id"] == _current_user_id()]
     default = workspaces.get_definition()
-    return {"server_version": __version__, "api_version": "1", "mcp_sdk_major": 2, "deployment_profile": "self-hosted", "transport": "streamable-http", "user": users.info(_current_user_id()), "runtime": {"execution_backend": "docker", "docker_image": settings.docker_image}, "workspace": {"count": len(visible), "default_workspace_id": settings.default_workspace_id}, "capabilities": {"persistent_workspace": True, "multiple_workspaces": len(visible) > 1, "docker_execution": True, "artifacts": True, "resource_limits": True, "resource_profiles": True, "on_demand_resources": True, "network_access": False, "non_root_runtime": True, "read_only_runtime_filesystem": True, "multiple_users": True}, "limits": default.limits.as_dict(), "maximum_limits": default.maximum_limits.as_dict(), "resource_profile": default.profile_id}
-
-
-def _execution_response(result: dict, workspace_id: str | None, resources: dict | None) -> dict:
-    result["resource_profile"] = workspaces.get_definition(workspace_id).profile_id
-    result["requested_resources"] = resources
-    return result
+    return {"server_version": __version__, "api_version": "1", "mcp_sdk_major": 2, "deployment_profile": "self-hosted", "transport": "streamable-http", "user": users.info(_current_user_id()), "runtime": {"execution_backend": "docker", "docker_image": settings.docker_image}, "workspace": {"count": len(visible), "default_workspace_id": settings.default_workspace_id}, "capabilities": {"persistent_workspace": True, "multiple_workspaces": len(visible) > 1, "docker_execution": True, "artifacts": True, "resource_limits": True, "resource_profiles": True, "on_demand_resources": True, "network_access": False, "non_root_runtime": True, "read_only_runtime_filesystem": True, "multiple_users": True, "file_catalog": True, "execution_history": True}, "limits": default.limits.as_dict(), "maximum_limits": default.maximum_limits.as_dict(), "resource_profile": default.profile_id}
 
 
 @mcp.tool()
@@ -129,7 +152,10 @@ def execute_python(code: str, workspace_id: str | None = None, resources: dict |
     """Execute ephemeral Python code in the workspace sandbox. Code is not saved as a workspace file."""
     try:
         limits = _requested_limits(workspace_id, resources)
-        return _execution_response(_executor(workspace_id).execute(code, limits), workspace_id, resources)
+        workspace = _workspace(workspace_id)
+        file_catalog.reconcile_workspace(workspace)
+        result = _executor(workspace_id).execute(code, limits)
+        return _finish_execution(result, workspace_id, resources, "execute_python")
     except ResourceLimitError as exc:
         return {"success": False, "error": str(exc), "resource_limit": True}
 
@@ -139,19 +165,44 @@ def execute_file(path: str, workspace_id: str | None = None, resources: dict | N
     """Execute a persistent .py file from the workspace. No process arguments are accepted."""
     try:
         limits = _requested_limits(workspace_id, resources)
-        return _execution_response(_executor(workspace_id).execute_file(path, limits), workspace_id, resources)
+        workspace = _workspace(workspace_id)
+        file_catalog.reconcile_workspace(workspace)
+        file_record = file_catalog.get_by_path(workspace.id, workspace.resolve(path).relative_to(workspace.root).as_posix())
+        result = _executor(workspace_id).execute_file(path, limits)
+        return _finish_execution(result, workspace_id, resources, "execute_file", file_record["file_id"] if file_record else None)
     except ResourceLimitError as exc:
         return {"success": False, "error": str(exc), "resource_limit": True}
 
 
 @mcp.tool()
-def list_files(workspace_id: str | None = None, path: str = ".") -> dict:
-    """List files and directories in a workspace path."""
+def list_execution_history(workspace_id: str | None = None, limit: int = 100) -> dict:
+    """List recent executions for a workspace. History is retained up to 100 executions per workspace."""
     workspace = _workspace(workspace_id)
+    if limit < 1 or limit > settings.execution_history_limit:
+        raise ValueError(f"limit must be between 1 and {settings.execution_history_limit}")
+    return {"workspace_id": workspace.id, "retention_limit": settings.execution_history_limit, "executions": execution_history.list_workspace(workspace.id, limit)}
+
+
+@mcp.tool()
+def list_files(workspace_id: str | None = None, path: str = ".") -> dict:
+    """List files and directories in a workspace path, including stable file IDs for files."""
+    workspace = _workspace(workspace_id)
+    file_catalog.reconcile_workspace(workspace)
     root = workspace.resolve(path)
     if not root.exists() or not root.is_dir():
         raise ValueError(f"Not a directory: {path}")
-    entries = [{"name": item.name, "path": item.relative_to(workspace.root).as_posix(), "type": "directory" if item.is_dir() else "file", "size_bytes": item.stat().st_size if item.is_file() else None} for item in sorted(root.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))]
+    entries = []
+    for item in sorted(root.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
+        relative = item.relative_to(workspace.root).as_posix()
+        entry = {"name": item.name, "path": relative, "type": "directory" if item.is_dir() else "file", "size_bytes": item.stat().st_size if item.is_file() else None}
+        if item.is_file():
+            record = file_catalog.get_by_path(workspace.id, relative)
+            if record:
+                entry["file_id"] = record["file_id"]
+                entry["uri"] = _file_uri(workspace.id, record["file_id"])
+                entry["mime_type"] = record["mime_type"]
+                entry["version"] = record["version"]
+        entries.append(entry)
     return {"workspace_id": workspace.id, "path": path, "entries": entries}
 
 
