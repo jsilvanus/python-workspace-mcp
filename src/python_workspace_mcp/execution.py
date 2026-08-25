@@ -77,7 +77,12 @@ class DockerExecutionBackend:
         finished_at = time.time()
         duration = time.monotonic() - started
         after = self._snapshot_files()
-        changed = sorted(path for path, metadata in after.items() if path not in before or before[path] != metadata)
+        before_paths = set(before)
+        after_paths = set(after)
+        created = sorted(after_paths - before_paths)
+        deleted = sorted(before_paths - after_paths)
+        modified = sorted(path for path in before_paths & after_paths if before[path] != after[path])
+        changed = created + modified
         timed_out = result.returncode in (124, 137)
         storage_used = self._storage_used()
         storage_exceeded = storage_used > limits.storage_bytes
@@ -88,7 +93,7 @@ class DockerExecutionBackend:
             stderr += "\nWorkspace storage limit exceeded."
         if output_limited:
             stderr += "\nExecution output was truncated."
-        artifacts = [self._artifact(path) for path in changed[: limits.max_artifacts_per_execution]]
+        artifacts = [self._artifact(path) for path in changed[: limits.max_artifacts_per_execution] if (self.workspace.root / path).is_file()]
         return {
             "execution_id": execution_id,
             "workspace_id": self.workspace.id,
@@ -102,6 +107,7 @@ class DockerExecutionBackend:
             "timed_out": timed_out,
             "resource_limits": limits.as_dict(),
             "storage_used_bytes": storage_used,
+            "files": {"created": created, "modified": modified, "deleted": deleted},
             "artifacts": artifacts,
             "artifacts_truncated": len(changed) > len(artifacts),
         }
