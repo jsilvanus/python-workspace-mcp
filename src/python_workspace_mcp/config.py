@@ -17,14 +17,15 @@ class Settings:
     workspace_path: Path = Path("./workspace")
     workspace_definitions: str = ""
     state_path: Path = Path("./data/state.json")
+    files_state_path: Path = Path("./data/files.json")
+    executions_state_path: Path = Path("./data/executions.json")
+    execution_history_limit: int = 100
     require_auth: bool = False
     file_signing_secret: str = "change-me"
     docker_image: str = "python-workspace-mcp-runtime:0.1"
     docker_container_prefix: str = "python-workspace-mcp"
     public_base_url: str = "http://localhost:8000"
     default_resource_profile: str = "standard"
-    # Legacy global limits remain as compatibility configuration for deployments
-    # that haven't migrated their workspaces to named profiles yet.
     execution_timeout: int = 60
     cpu_limit: float = 2.0
     memory_limit_bytes: int = 4 * 1024 * 1024 * 1024
@@ -48,6 +49,9 @@ class Settings:
             workspace_path=path,
             workspace_definitions=os.getenv("PYTHON_WORKSPACE_WORKSPACES", ""),
             state_path=state_path,
+            files_state_path=Path(os.getenv("PYTHON_WORKSPACE_FILES_STATE", "./data/files.json")).expanduser().resolve(),
+            executions_state_path=Path(os.getenv("PYTHON_WORKSPACE_EXECUTIONS_STATE", "./data/executions.json")).expanduser().resolve(),
+            execution_history_limit=int(os.getenv("PYTHON_WORKSPACE_EXECUTION_HISTORY_LIMIT", "100")),
             require_auth=os.getenv("PYTHON_WORKSPACE_REQUIRE_AUTH", "false").lower() in {"1", "true", "yes", "on"},
             file_signing_secret=os.getenv("PYTHON_WORKSPACE_FILE_SIGNING_SECRET", "change-me"),
             docker_image=os.getenv("PYTHON_WORKSPACE_DOCKER_IMAGE", "python-workspace-mcp-runtime:0.1"),
