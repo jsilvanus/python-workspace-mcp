@@ -34,7 +34,7 @@ class WorkspaceManager:
 
     def _ensure_defaults(self) -> None:
         state = self.store.load()
-        if not state["workspaces"]:
+        if not state["workspaces"] and not self.settings.workspace_definitions.strip():
             state["workspaces"][self.settings.default_workspace_id] = {
                 "name": self.settings.workspace_name,
                 "root": str(self.settings.workspace_path),
@@ -51,6 +51,8 @@ class WorkspaceManager:
             workspace_id, name, root = parts[:3]
             owner_user_id = parts[3] if len(parts) >= 4 else self.settings.user_id
             profile_id = parts[4] if len(parts) == 5 else self.settings.default_resource_profile
+            self._validate_id(workspace_id)
+            self._validate_id(owner_user_id)
             self.profiles.get(profile_id)
             state["workspaces"].setdefault(workspace_id, {
                 "name": name,

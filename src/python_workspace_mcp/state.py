@@ -43,7 +43,7 @@ class StateStore:
             fd, temporary = tempfile.mkstemp(prefix=".state-", dir=self.path.parent)
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                    json.dump(data, handle, indent=2, sort_keys=True)
+                    json.dump(data, handle, indent=2)
                     handle.write("\n")
                 os.replace(temporary, self.path)
             finally:
