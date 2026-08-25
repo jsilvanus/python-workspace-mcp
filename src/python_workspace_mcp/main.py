@@ -13,6 +13,7 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, Response
 
 from . import __version__
+from .config import Settings
 from .execution import DockerExecutionBackend, ResourceLimitError
 from .limits import ResourceLimits
 from .users import Principal, UserManager
