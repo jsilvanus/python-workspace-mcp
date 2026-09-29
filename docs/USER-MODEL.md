@@ -38,7 +38,9 @@ The three-field form remains valid and assigns the configured service user as ow
 
 Phase 2 retains the single Bearer API key configured by `PYTHON_WORKSPACE_API_KEY`. That key currently resolves to the configured service user, and resolution fails the same way if that user hasn't been created yet.
 
-This is intentionally not a multi-user authentication system yet. Phase 3 will introduce real users, multiple credentials, credential management, roles and account administration.
+Per-user API keys (`python-workspace key create <user_id>`) resolve to their user. When `OIDC_ISSUER` is set, MCP clients can also sign in through OAuth + single sign-on; the provider identity (issuer + `sub`) is linked to a local user by a stored link, by a verified email set with `user add --email` / `user set-email`, or, with `OIDC_CREATE_USERS=true`, by creating a user. The access token then resolves to that user exactly as an API key would. See the README.
+
+This is intentionally not a full account-management system yet. Phase 3 will introduce real users, multiple credentials, credential management, roles and account administration.
 
 ## Authorization
 

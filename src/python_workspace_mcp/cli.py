@@ -43,6 +43,10 @@ def build_parser() -> argparse.ArgumentParser:
     add = user_sub.add_parser("add", help="Create a user")
     add.add_argument("id")
     add.add_argument("name")
+    add.add_argument("--email", default=None, help="Email used to link a single sign-on (OIDC) identity to this user")
+    set_email = user_sub.add_parser("set-email", help="Set or clear (omit the email) the email used to link single sign-on")
+    set_email.add_argument("id")
+    set_email.add_argument("email", nargs="?", default=None)
     user_sub.add_parser("list", help="List users")
     remove = user_sub.add_parser("remove", help="Remove a user")
     remove.add_argument("id")
@@ -121,7 +125,11 @@ def _print_mcp_config(args: argparse.Namespace, settings: Settings, users: UserM
     name = args.name
     key, source = _resolve_api_key(args, settings, users)
 
-    if key:
+    if settings.oidc is not None and not key:
+        print("# OAuth sign-in is enabled (OIDC_ISSUER): MCP clients that support OAuth need only the URL;")
+        print("# they are sent to single sign-on on first connect. API keys keep working too.")
+        print()
+    elif key:
         print(f"# Using an API key: {source}")
         if source and source.startswith("newly created"):
             print(f"#   {key}")
@@ -209,11 +217,19 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "user":
         if args.action == "add":
-            user = users.create_user(args.id, args.name)
+            user = users.create_user(args.id, args.name, args.email)
             print(f"created user {user.id}: {user.name}")
+        elif args.action == "set-email":
+            user = users.set_email(args.id, args.email)
+            print(f"updated user {user.id}: email={user.email or '-'}")
         elif args.action == "list":
             for user in users.all():
-                print(f"{user.id}\t{user.name}")
+                line = f"{user.id}\t{user.name}"
+                if user.email or settings.oidc is not None:
+                    line += f"\t{user.email or '-'}"
+                if settings.oidc is not None:
+                    line += f"\tsso_links={len(users.oidc_identities(user.id))}"
+                print(line)
         elif args.action == "remove":
             users.delete_user(args.id)
             print(f"removed user {args.id}")

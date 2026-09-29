@@ -81,3 +81,19 @@ def test_api_key_rejects_wrong_secret(tmp_path: Path) -> None:
     key = manager.create_api_key("bob")
     with pytest.raises(ValueError, match="Invalid API key"):
         manager.resolve_api_key(key + "x")
+
+
+def test_user_email_lookup_and_oidc_links(tmp_path: Path) -> None:
+    manager = UserManager.from_settings(settings(tmp_path))
+    manager.create_user("carol", "Carol", email="Carol@Example.org")
+    assert manager.find_by_email("carol@example.ORG").id == "carol"
+    with pytest.raises(ValueError, match="already belongs"):
+        manager.create_user("dave", "Dave", email="carol@example.org")
+    with pytest.raises(ValueError, match="Invalid email"):
+        manager.set_email("carol", "not-an-email")
+    manager.link_oidc_identity("https://idp.example/", "sub-1", "carol")
+    assert manager.find_oidc_identity("https://idp.example/", "sub-1").id == "carol"
+    assert manager.find_oidc_identity("https://other.example/", "sub-1") is None
+    manager.set_email("carol", None)
+    assert manager.find_by_email("carol@example.org") is None
+    assert manager.info("carol") == {"id": "carol", "name": "Carol"}

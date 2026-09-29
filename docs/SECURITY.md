@@ -14,6 +14,7 @@ Do not expose a Phase 1 deployment to untrusted users merely because it runs Pyt
 - MCP file operations enforce workspace path containment.
 - Artifact downloads require a signed token.
 - Optional Bearer API-key authentication protects the MCP endpoint.
+- Optional OAuth (enabled by `OIDC_ISSUER`): MCP clients get access tokens bound to the server's issuer and `/mcp` audience after single sign-on at an OIDC provider and an explicit consent step. See the README, "OAuth sign-in with single sign-on (OIDC)".
 - Execution has a configurable timeout inside the container.
 
 ## Phase 2 requirements

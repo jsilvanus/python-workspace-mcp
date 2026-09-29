@@ -23,7 +23,7 @@ class StateStore:
     def load(self) -> dict[str, Any]:
         with self._lock:
             if not self.path.exists():
-                return {"users": {}, "api_keys": {}, "workspaces": {}, "resource_profiles": {}}
+                return {"users": {}, "api_keys": {}, "workspaces": {}, "resource_profiles": {}, "oidc_identities": {}}
             try:
                 data = json.loads(self.path.read_text(encoding="utf-8"))
             except json.JSONDecodeError as exc:
@@ -35,6 +35,7 @@ class StateStore:
                 "api_keys": dict(data.get("api_keys", {})),
                 "workspaces": dict(data.get("workspaces", {})),
                 "resource_profiles": dict(data.get("resource_profiles", {})),
+                "oidc_identities": dict(data.get("oidc_identities", {})),
             }
 
     def save(self, data: dict[str, Any]) -> None:

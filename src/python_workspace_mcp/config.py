@@ -4,6 +4,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from .oidc_config import OidcSettings, load_oidc_settings, parse_bool
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -33,11 +35,25 @@ class Settings:
     pids_limit: int = 128
     max_output_bytes: int = 2 * 1024 * 1024
     max_artifacts_per_execution: int = 50
+    oauth_state_path: Path = Path("./data/oauth.json")
+    oidc: OidcSettings | None = None
 
     @classmethod
     def from_env(cls) -> "Settings":
         path = Path(os.getenv("PYTHON_WORKSPACE_PATH", "./workspace")).expanduser().resolve()
         state_path = Path(os.getenv("PYTHON_WORKSPACE_STATE", "./data/state.json")).expanduser().resolve()
+        public_base_url = os.getenv("PYTHON_WORKSPACE_PUBLIC_URL", "http://localhost:8000").rstrip("/")
+        # OIDC sign-in + the embedded OAuth server exist only when OIDC_ISSUER is set (None otherwise).
+        oidc = load_oidc_settings(os.environ, public_base_url)
+        # With OAuth enabled, /mcp answers unauthenticated requests with 401 + WWW-Authenticate by
+        # default, so MCP clients discover the sign-in; PYTHON_WORKSPACE_REQUIRE_AUTH=false still opts out.
+        require_auth_env = os.getenv("PYTHON_WORKSPACE_REQUIRE_AUTH")
+        if require_auth_env is None or not require_auth_env.strip():
+            require_auth = oidc is not None
+        elif oidc is not None:
+            require_auth = parse_bool("PYTHON_WORKSPACE_REQUIRE_AUTH", require_auth_env, False)
+        else:
+            require_auth = require_auth_env.lower() in {"1", "true", "yes", "on"}
         return cls(
             host=os.getenv("PYTHON_WORKSPACE_HOST", "0.0.0.0"),
             port=int(os.getenv("PYTHON_WORKSPACE_PORT", "8000")),
@@ -52,11 +68,11 @@ class Settings:
             files_state_path=Path(os.getenv("PYTHON_WORKSPACE_FILES_STATE", "./data/files.json")).expanduser().resolve(),
             executions_state_path=Path(os.getenv("PYTHON_WORKSPACE_EXECUTIONS_STATE", "./data/executions.json")).expanduser().resolve(),
             execution_history_limit=int(os.getenv("PYTHON_WORKSPACE_EXECUTION_HISTORY_LIMIT", "100")),
-            require_auth=os.getenv("PYTHON_WORKSPACE_REQUIRE_AUTH", "false").lower() in {"1", "true", "yes", "on"},
+            require_auth=require_auth,
             file_signing_secret=os.getenv("PYTHON_WORKSPACE_FILE_SIGNING_SECRET", "change-me"),
             docker_image=os.getenv("PYTHON_WORKSPACE_DOCKER_IMAGE", "python-workspace-mcp-runtime:0.1"),
             docker_container_prefix=os.getenv("PYTHON_WORKSPACE_DOCKER_PREFIX", "python-workspace-mcp"),
-            public_base_url=os.getenv("PYTHON_WORKSPACE_PUBLIC_URL", "http://localhost:8000").rstrip("/"),
+            public_base_url=public_base_url,
             default_resource_profile=os.getenv("PYTHON_WORKSPACE_RESOURCE_PROFILE", "standard"),
             execution_timeout=int(os.getenv("PYTHON_WORKSPACE_EXECUTION_TIMEOUT", "60")),
             cpu_limit=float(os.getenv("PYTHON_WORKSPACE_CPU_LIMIT", "2")),
@@ -65,4 +81,6 @@ class Settings:
             pids_limit=int(os.getenv("PYTHON_WORKSPACE_PIDS_LIMIT", "128")),
             max_output_bytes=int(os.getenv("PYTHON_WORKSPACE_MAX_OUTPUT_BYTES", str(2 * 1024 * 1024))),
             max_artifacts_per_execution=int(os.getenv("PYTHON_WORKSPACE_MAX_ARTIFACTS", "50")),
+            oauth_state_path=Path(os.getenv("PYTHON_WORKSPACE_OAUTH_STATE", "./data/oauth.json")).expanduser().resolve(),
+            oidc=oidc,
         )
