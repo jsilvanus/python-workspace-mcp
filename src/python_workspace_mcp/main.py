@@ -17,7 +17,9 @@ from .config import Settings
 from .execution import DockerExecutionBackend, ResourceLimitError
 from .execution_history import ExecutionHistory
 from .files import FileCatalog
+from .json_store import JsonStore
 from .limits import ResourceLimits
+from .oauth import PUBLIC_PATH_PREFIXES, OAuthServer, OAuthStore
 from .users import Principal, UserManager
 from .workspaces import WorkspaceManager
 
@@ -29,6 +31,17 @@ execution_history = ExecutionHistory(settings.executions_state_path, settings.ex
 executors: dict[str, DockerExecutionBackend] = {}
 _current_principal: ContextVar[Principal | None] = ContextVar("current_principal", default=None)
 mcp = MCPServer("Python Workspace MCP", version=__version__)
+# OAuth authorization/resource server with OIDC sign-in: only when OIDC_ISSUER is set.
+oauth_server: OAuthServer | None = None
+if settings.oidc is not None:
+    oauth_server = OAuthServer(
+        settings.public_base_url,
+        settings.oidc,
+        users,
+        OAuthStore(JsonStore(settings.oauth_state_path, lambda: {"codes": {}, "refresh_tokens": {}})),
+    )
+    for _path, _methods, _endpoint in oauth_server.routes():
+        mcp.custom_route(_path, methods=_methods)(_endpoint)
 
 
 def _principal() -> Principal:
@@ -270,25 +283,39 @@ async def file_download(request: Request) -> Response:
     return FileResponse(target)
 
 
+def _unauthorized(error: str = "unauthorized", invalid_token: bool = False) -> JSONResponse:
+    if oauth_server is None:
+        return JSONResponse({"error": error}, status_code=401, headers={"WWW-Authenticate": "Bearer"})
+    # RFC 9728: point MCP clients at the protected-resource metadata so they can start OAuth.
+    return JSONResponse({"error": error}, status_code=401, headers={"WWW-Authenticate": oauth_server.www_authenticate("invalid_token" if invalid_token else None)})
+
+
 class ApiKeyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         if request.url.path == "/healthz" or request.url.path.startswith("/files/"):
+            return await call_next(request)
+        if oauth_server is not None and request.url.path.startswith(PUBLIC_PATH_PREFIXES):
             return await call_next(request)
         supplied = request.headers.get("authorization", "")
         principal = None
         if supplied:
             if not supplied.startswith("Bearer "):
-                return JSONResponse({"error": "invalid authorization"}, status_code=401, headers={"WWW-Authenticate": "Bearer"})
+                return _unauthorized("invalid authorization", invalid_token=True)
             raw_key = supplied[7:]
             try:
                 principal = users.resolve_api_key(raw_key)
             except ValueError:
                 if settings.api_key and hmac.compare_digest(raw_key, settings.api_key):
                     principal = users.principal("environment-api-key")
+                elif oauth_server is not None:
+                    # API keys keep working; anything else must be one of our OAuth access tokens.
+                    principal = oauth_server.principal_for_access_token(raw_key)
+                    if principal is None:
+                        return _unauthorized(invalid_token=True)
                 else:
-                    return JSONResponse({"error": "unauthorized"}, status_code=401, headers={"WWW-Authenticate": "Bearer"})
+                    return _unauthorized()
         if principal is None and settings.require_auth:
-            return JSONResponse({"error": "unauthorized"}, status_code=401, headers={"WWW-Authenticate": "Bearer"})
+            return _unauthorized()
         token = _current_principal.set(principal)
         try:
             return await call_next(request)
